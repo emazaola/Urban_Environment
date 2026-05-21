@@ -3,6 +3,7 @@ title: "Clasificación Medicciones NO2"
 params:
   aoi: "Erandio"
   year: 2026
+  variable: "no2"
 ---
 
 ## librerias
@@ -11,6 +12,7 @@ params:
 library(readxl)
 library(tidyverse)
 library(sf)
+library(sfarrow) ## para guardar como geoparquet
 
 library(openrouteservice)
 
@@ -34,6 +36,32 @@ library(tidyterra)
 ```{r data_path}
 geodata_path <- here("../../10_data/geodata/geoeuskadi//")
 data_path <- here("../../10_data/numeric-data//")
+
+```
+
+
+
+
+
+```{r 201_path_process}
+path_process <- paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/")
+path_process
+```
+
+
+Crear directorio
+
+```{r 201_dir_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_process,
+  recursive = TRUE, 
+  showWarnings = FALSE)
 
 ```
 
@@ -257,5 +285,65 @@ NO2_interior <- NO2_sf |>
  
 ```
 
+
+
+## Generar archivos utm y 
+
+```{r 201_to_UTM}
+NO2_interior_utm <- NO2_interior |> 
+  st_transform(25830)
+
+
+NO2_exterior_utm <- NO2_exterior |> 
+  st_transform(25830)
+
+# ofical_utm <- oficial |>   st_transform(25830)
+```
+
+Para trabajar con leaflet se necesitará: EPSG:4326 - WGS 84
+
+```{r 201_to_UTM}
+NO2_interior_4326 <- NO2_interior |> 
+  st_transform(4326)
+
+
+NO2_exterior_4326 <- NO2_exterior |> 
+  st_transform(4326)
+
+
+# ofical_4326  <- oficial |>   st_transform(4326)
+
+```
+
+
+
+
 ## Guardar como geoparquet
+
+
+```{r 201-geoparquet}
+# 1. Metemos los objetos en una lista dándoles un nombre
+lista_sf <- list(
+  "NO2_interior_utm" = NO2_interior_utm,
+  "NO2_interior_4326" = NO2_interior_4326,
+  "NO2_exterior_utm" = NO2_exterior_utm,
+  "NO2_exterior_4326" = NO2_exterior_4326#,
+#  "ofical_utm"= ofical_utm,
+#  "ofical_4326"=ofical_4326
+)
+```
+
+
+```{r}
+lista_sf |> 
+  iwalk(\(objeto_sf, nombre_archivo) {
+    ruta_final <- file.path(path_process, paste0(nombre_archivo, ".parquet"))
+    
+    objeto_sf |> 
+      st_write_parquet(ruta_final)
+  })
+```
+```{r}
+# mi_sf_recuperado <- st_read_parquet(file.path(path_process, "NO2_exterior_utm.parquet"))
+```
 

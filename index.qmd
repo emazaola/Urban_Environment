@@ -1,0 +1,95 @@
+---
+title: "Índice"
+---
+
+# Bienvenida {.unnumbered}
+
+Bienvenido a este libro sobre aplicaciones de GIS y teledetección. En las siguientes páginas, exploraremos...
+
+\[CONTEXTO DE PROYECTO: MODELO LUR HÍBRIDO EN ERANDIO\]
+
+1.  OBJETIVO DEL ESTUDIO: Desarrollar un modelo de Regresión de Uso del Suelo (LUR - Land Use Regression) Híbrido Avanzado para estimar las concentraciones medias de NO2 urbano en el municipio de Erandio (País Vasco).
+
+2.  DISEÑO EXPORTADO Y ESTRUCTURA DE DATOS:
+
+-   Variable dependiente: Mediciones reales de NO2 exterior procesadas (80 puntos de muestreo distribuidos en el territorio).
+-   Formato de entrada: Datos geográficos ya filtrados y transformados a un sistema proyectado local (ETRS89 / UTM zone 30N).
+-   Flujo previo: Ya se han calculado isocronas a pie mediante OpenRouteService (ors_isochrones) y zonificaciones de Voronoi.
+
+3.  ARQUITECTURA TECNOLÓGICA (Optimización de Rendimiento): Para evitar saturar la memoria RAM con capas masivas (como nubes de puntos LiDAR o catastros de edificios completos), el proyecto utiliza:
+
+-   R y RStudio: Como centro de control del script (.qmd).
+-   Apache Parquet / GeoParquet: Para el almacenamiento ultra-comprimido de vectores y geometrías en el disco duro.
+-   Apache Arrow (geoarrow): Para la gestión columnar de datos en memoria RAM compartida (Zero-Copy).
+-   DuckDB (con extensión spatial): Como motor principal para calcular buffers, distancias e intersecciones espaciales pesadas de forma externa a la RAM de R.
+-   Librería 'terra' de R: Para la lectura eficiente y extracción píxel a píxel de capas Raster (DEM y NDVI).
+
+4.  LAS 8 COVARIABLES SELECCIONADAS (MODELO REAL UNIVERSAL): El modelo se nutre de datos reales extraídos del territorio bajo la siguiente lógica ambiental:
+
+-   Tráfico (Líneas): 'dist_carretera' (distancia mínima a vías principales) y 'long_traf_300m' (longitud de viales en buffer de 300m).
+-   Morfología Urbana (Efecto Cañón): 'altura_edificios_100m' (altura media de edificaciones en un radio micro para capturar estancamiento del aire).
+-   Vegetación / Sumideros: 'altura_arboles_100m' (volumen de la barrera vegetal) y 'area_verde_500m' (superficie de parques/bosques en LULC).
+-   Topografía / Meteorología: 'altitud_dem' (elevación extraída de un Modelo Digital de Elevaciones para evaluar la dispersión física/ventilación).
+-   Demografía: 'densidad_pob_500m' (población total en buffer de 500m como indicador de actividad antrópica).
+-   Uso del Suelo Industrial: 'area_ind_1000m' (superficie industrial en un buffer macro de 1km extraída de LULC).
+
+5.  MODELIZACIÓN ESTADÍSTICA PENSADA:
+
+-   Diagnóstico inicial: Uso de la librería 'car' en R para evaluar el Factor de Inflación de la Varianza (VIF) y eliminar la multicolinealidad de los buffers concéntricos.
+-   Selección: Selección de predictores mediante regresión de subconjuntos ('leaps').
+-   Predicción y Machine Learning: Flujo comparativo (Benchmark) mediante 'tidymodels' entrenando un modelo lineal clásico (OLS), un Random Forest (para capturar interacciones no lineales como el efecto cañón y árboles) y opcionalmente XGBoost.
+-   Validación: Test de I de Moran (spdep) para autocorrelación espacial residual y corrección mediante modelos de error espacial (spatialreg) si fuera necesario.
+
+6.  PUNTO ACTUAL EN EL QUE SE QUEDÓ EL TRABAJO: El usuario ha validado el enfoque híbrido y la arquitectura DuckDB + GeoParquet. Se dispone a estructurar y organizar el sistema de carpetas del proyecto en su disco duro local para empezar a ejecutar e importar los datos paso a paso.
+
+## Estructura del libro
+
+Este libro está organizado en los siguientes capítulos:
+
+1.  RECURSOS
+
+    -   Recursos
+
+    -   data
+
+2.  MODELO DIGITAL DE ELEVACIONES
+
+3.  CLIMATOLOGÍA
+
+    -   Descargas CDSE
+
+    -   Precipitation
+
+    -   ERA5-Temp -
+
+    -   MBtiles
+
+4.  DEMOGRAFÍA
+
+    -   Demografy
+
+    -   Population
+
+    -   Built-up
+
+    -   Built-up-3D
+
+    -   OvertureMaps
+
+5.  OPEN STREETS MAPS
+
+    -   Open_Street_Maps
+
+    -   OSM-Object selection
+
+    -   Isocronas
+
+    -   -OSM_Health_Data
+
+6.  CONTAMINACIÓN ATMOSFÉRICA
+
+    -   Descargas_copernicus-Brw
+
+    -   Sentinel-5
+
+    -   ESA-STAC-land-cover
