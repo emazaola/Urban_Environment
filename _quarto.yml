@@ -19,6 +19,7 @@ book:
     - part: "CONTAMINACIÓN NO2"
       chapters:
         - 201-data_classification.qmd
+        - 202-Isocronas-3k.qmd
 #        - 20-RSI_Sentinel2.qmd
 #    - part: "FAUNA"
 #      chapters:

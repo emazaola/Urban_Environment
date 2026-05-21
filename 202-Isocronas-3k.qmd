@@ -1,0 +1,1361 @@
+---
+title: "Análisis de Accesibilidad: Isocronas de Contaminación"
+author: "Gisarte"
+date: "`r Sys.Date()`"
+format: html
+params:
+  aoi: "Erandio"
+  year: 2026
+  variable: "no2"
+---
+
+## librerias
+
+```{r setup, include=FALSE}
+
+#| message: false
+#| warning: false
+#| 
+library(readxl)
+library(tidyverse)
+library(sf)
+library(sfarrow) ## para guardar como geoparquet
+
+library(openrouteservice)
+
+library(mapview)
+library(here)
+
+
+
+
+library(leaflet)
+library(leaflet.extras)
+library(htmlwidgets)
+library(htmltools)
+
+#library(maptiles)
+#library(tidyterra)
+
+
+
+# --- 1. TU FUNCIÓN ORIGINAL DE CREDENCIALES ---
+read_openrouteservice_credentials <- function() {
+  netrc_path <- "C:/Users/Lez_2/credentials/open_route.txt"
+  
+  if (file.exists(netrc_path)) {
+    netrc_content <- readLines(netrc_path, warn = FALSE)
+    if (length(netrc_content) == 1) {
+      parts <- strsplit(netrc_content, " ")[[1]]
+      if (length(parts) >= 6) {
+        return(list(
+          api_key = parts[6]
+        ))
+      }
+    }
+    stop("Incorrect format in CDSE.txt file")
+  } else {
+    stop("CDSE credentials file not found. Please check the file path.")
+  }
+}
+
+# --- 2. LECTURA Y REGISTRO AUTOMÁTICO ---
+credentials <- read_openrouteservice_credentials()
+api_key <- credentials$api_key
+
+# Registramos la clave en la sesión actual de openrouteservice
+ors_api_key(api_key)
+
+# ors_api_key()
+```
+
+
+
+## Fijar rutas
+
+```{r data_path}
+geodata_path <- here("../../10_data/geodata/geoeuskadi//")
+data_path <- here("../../10_data/numeric-data//")
+
+```
+
+
+
+
+
+```{r 202_path_process}
+path_process <- paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/")
+path_process
+```
+
+
+Crear directorio
+
+```{r 201_dir_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_process,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+## Cargar datos
+
+La zona de interés
+
+```{r 201aoi}
+
+
+aoi <- read_sf(here(paste0(geodata_path, "MUNICIPIOS_5000_ETRS89/MUNICIPIOS_5000_ETRS89.shp"))) |> 
+
+  filter(NOMBRE_TOP== params$aoi)|> 
+  select(c("NOMBRE_TOP", "MUN_MUNI", "geometry"))|> 
+  select(c("NOMBRE_TOP", "geometry"))
+
+
+# st_crs(aoi)
+
+aoi$NOMBRE_TOP <- params$aoi
+
+# mapview(aoi)
+```
+
+Los datos de las mediciones de NO2.
+
+
+
+```{r}
+
+ruta_gpkg <- file.path(path_process, "medidas_NO2.gpkg")
+
+# Cargamos Erandio (AOI) y la capa ya geográfica que preparaste
+
+# aoi <- st_read(ruta_gpkg, layer = "aoi", quiet = TRUE)
+
+no2 <- st_read(ruta_gpkg, layer = "NO2_exterior_4326", quiet = TRUE)
+
+# mapview(no2)
+```
+
+
+## Open Route Service (ORS)
+
+Hacer buffer de los puntos exteriores de 5 minutos caminando Vemos las alternativas que tiene ORS
+
+```{r}
+openrouteservice::ors_profile()
+```
+
+
+```{r}
+coordenadas_lista <- st_coordinates(no2) |> 
+  as.data.frame() |> 
+  purrr::transpose() |> 
+  map(\(pt) c(pt$X, pt$Y))
+
+```
+
+
+
+```{r}
+#| message: false
+
+lista_isocronas <- map2(
+  .x = coordenadas_lista,
+  .y = no2$Clase,
+  .f = \(punto, clase_no2) {
+    
+    # 1. Pausa de cortesía obligatoria (0.5 segundos) para no saturar la API oficial
+    Sys.sleep(0.5)
+    
+    tryCatch({
+      # Llamada directa usando tus parámetros originales
+      iso <- ors_isochrones(
+        locations = list(punto),
+        profile = "foot-walking", # Perfil peatonal
+        range = 300,              # 5 minutos en segundos
+        output = "sf"
+      )
+      
+      # Conservamos el nivel de NO2 asignándolo al polígono resultante
+      iso |> mutate(Clase = clase_no2)
+      
+    }, error = function(e) {
+      NULL # Si un punto falla por problemas de red o snapping, el bucle continúa
+    })
+  }
+)
+
+
+```
+
+```{r}
+#| message: false
+
+# Unificamos los polígonos devueltos en un único objeto espacial sf
+isocronas_sf <- lista_isocronas |> 
+  discard(is.null) |> 
+  purrr::list_rbind() |> 
+  st_as_sf()
+
+# Fijamos el sistema de coordenadas de salida explícitamente a WGS84
+st_crs(isocronas_sf) <- 4326
+```
+
+
+
+
+::: {.alert .alert-block .alert-info}
+#### Aclaración sobre el límite de la API
+
+En versiones anteriores de este flujo, se requería trocear el dataframe debido a que la API de OpenRouteService limita las peticiones a un máximo de 5 elementos por llamada. 
+
+A modo de documentación, este era el código utilizado para estructurar los grupos, el cual **ya no es necesario** en la versión actual:
+
+```{r}
+#| eval: false
+# 1. Crear una columna de grupos de 5 elementos
+exterior_buff <- NO2_exterior |> 
+  mutate(grupo = ceiling(row_number() / 5))
+
+# 2. Dividir el dataframe en grupos independientes
+lista_grupos <- exterior_buff |> 
+  group_split(grupo)
+```
+
+
+
+### CREDENTIALS
+
+```{r 202_credentials_ORS}
+#| eval: false
+
+# Read API credentials from .netrc file
+read_openrouteservice_credentials <- function() {
+  netrc_path <- "C:/Users/Lez_2/credentials/open_route.txt"
+  
+  if (file.exists(netrc_path)) {
+    netrc_content <- readLines(netrc_path, warn = FALSE)
+    if (length(netrc_content) == 1) {
+      parts <- strsplit(netrc_content, " ")[[1]]
+      if (length(parts) >= 6) {
+        return(list(
+          api_key = parts[6]# ,
+          #secret = parts[8]
+        ))
+      }
+    }
+    stop("Incorrect format in CDSE.txt file")
+  } else {
+    stop("CDSE credentials file not found. Please check the file path.")
+  }
+}
+
+```
+
+```{r 202_read_credentials}
+#| eval: false
+
+# Read CDSE credentials
+credentials <- read_openrouteservice_credentials()
+api_key <- credentials$api_key
+
+```
+
+```{r 22_buff_creation}
+#| eval: false
+
+# Convertir a lat/lon (EPSG:4326)
+exterior_buff <- st_transform(no2, crs = 4326)
+
+# Extraer coordenadas
+coords <- st_coordinates(exterior_buff)
+head(coords)
+
+```
+
+### Crear grupos de 5 o menos registros
+
+Como ORS solo hace isocronas de un máximo de 5 elementos, se hacen grupos de 5 elementos o menos. El tipo de grupo se añade como columna.
+
+```{r 202_groups_creation}
+#| eval: false
+
+# 1. Crear una columna de grupos
+exterior_buff <- NO2_exterior  |> 
+  mutate(grupo = ceiling(row_number() / 5))
+```
+
+Para que ORS calcule ls isocronas, se divide el objeto en una lista en la que los elementos de la lista son cada uno de los grupos.
+
+```{r 202_df_with_groups}
+# 2. Dividir el dataframe en grupos
+lista_grupos <- exterior_buff  |> 
+  group_split(grupo)
+
+# 3. Renombrar los grupos
+nombres_grupos <- paste0("g", 1:length(lista_grupos))
+
+names(lista_grupos) <- nombres_grupos
+
+names(lista_grupos)
+
+# lista_grupos2 <- lista_grupos[1:3]
+```
+
+El cálculo de las isocronas se realiza a partir de lon y lat en coordenadas geográficas. **4326**
+
+```{r 202_apply_groups}
+#| eval: false
+
+# Función para aplicar a cada grupo
+# Solo se necesitas las coordenadas
+procesar_grupo <- function(grupo_df) {
+  grupo_df  |> 
+    select(c("lon", "lat"))  |> 
+    st_drop_geometry()
+}
+
+# Aplicar la función a cada grupo usando map()
+lista_grupos_procesada <- map(lista_grupos, procesar_grupo)
+```
+
+```{r 202_isocrones_function}
+#| eval: false
+
+# Función para obtener isocronas para un grupo
+obtener_isocronas_grupo <- function(grupo_df) {
+  ors_isochrones(
+    locations = grupo_df,
+    profile = "foot-walking",
+    range = 300,
+    interval = 300,
+    api_key = api_key,
+    output = "sf"
+  )
+}
+```
+
+```{r 202_isocrones_apply}
+#| eval: false
+
+# Aplicar la función a cada grupo usando map()
+lista_isocronas <- map(lista_grupos_procesada,
+                       obtener_isocronas_grupo)
+```
+
+```{r 202_iso_bind}
+#| eval: false
+
+# Convertir la lista en un único objeto sf
+isocronas_unificado <- list_rbind(lista_isocronas)
+```
+
+```{r 202_iso_to_sf}
+#| eval: false
+
+isocronas_sf <- st_as_sf(isocronas_unificado)
+```
+
+### Crear **Clase** en Isocronas Unificado
+
+Coincide con el orden del sf original
+
+```{r 202_iso_with_clase}
+#| eval: false
+
+isocronas_sf$Clase <- exterior_buff$Clase
+```
+
+```{r 202_iso_selection}
+#| eval: false
+
+isocronas_sf <- isocronas_sf |> 
+  select(c("Clase", "geometry"))
+
+
+```
+
+```{r}
+#| eval: false
+
+isocronas_sf |> 
+  filter(Clase=="Bueno") |> 
+  mapview()+
+  NO2_exterior |> 
+  filter(Clase=="Bueno") |> 
+  mapview()
+```
+
+
+Ahora "isocronas_unificado" es un único objeto sf que contiene todas las isocronas
+
+
+
+
+**Al enviar las peticiones de uno en uno con `map2()`, simplificamos el proceso.**
+
+
+
+:::
+
+
+
+
+```{r 202_mapview_iso}
+# Ahora "isocronas_unificado" es un único objeto sf que contiene todas las isocronas
+mapview(isocronas_sf,
+        zcol="Clase", 
+        col.regions = c(#"Inaceptable" = "red",
+                        "Bueno" = "forestgreen",
+                        "Regular" = "yellow"
+                        )
+        )
+```
+
+```{r 201_iso_names}
+# Mostrar el objeto sf unificado
+names(isocronas_sf)
+```
+
+```{r 201_ggplot_1}
+ggplot() +
+  geom_sf(data = aoi) +
+  geom_sf(data = isocronas_sf, aes(fill=Clase)) +
+  labs(title = "Isocronas Unificadas",
+       x = "Longitud",
+       y = "Latitud") +
+  theme_minimal()
+```
+
+
+
+
+#### Unión de polígonos
+
+```{r 202_iso_union_by_clase}
+# Unir las geometrías agrupadas por "Clase"
+isocronas_union <- isocronas_sf |> 
+  mutate(geometry = st_make_valid(geometry))|>
+  group_by(Clase) |>
+  summarise(geometry = st_union(geometry), 
+            .groups = "drop")# para evitar que R te lance un mensaje de advertencia en la consola, y nos aseguraremos de que el resultado final mantenga el CRS 4326.
+
+isocronas_union
+```
+#### Visulizaciones isocronas
+
+```{r 202_mapview_isoUnion}
+mapview(isocronas_union,
+        zcol="Clase", 
+        col.regions = c(#"Inaceptable" = "red",
+                        "Bueno" = "forestgreen",
+                        "Regular" = "yellow"
+                        )
+        )
+```
+
+## ----------------------------------------------------------------------
+
+
+```{r}
+# 1. Definimos tu paleta de colores personalizada
+colores_calidad <- c(
+  #"Inaceptable" = "red",
+  "Bueno" = "forestgreen",
+  "Regular" = "yellow"
+)
+
+# 2. Gráfico ggplot con colores idénticos a mapview
+ggplot() +
+  # Dibujamos el municipio de fondo en gris claro para dar contexto espacial
+  geom_sf(data = aoi, fill = "grey95", color = "grey70") +
+  
+  # Pintamos las isocronas con su color correspondiente
+  geom_sf(data = isocronas_union, aes(fill = Clase), alpha = 0.7) +
+  
+  # Aplicamos manualmente tu paleta de colores
+  scale_fill_manual(values = colores_calidad, 
+                   name = expression(paste("Calidad del Aire (", NO[2], ")"))
+                   ) +
+  
+  # Dividimos en cuadrículas por cada Clase de forma limpia
+  facet_wrap(~Clase, ncol = 2) +
+  theme_minimal()
+```
+
+
+
+
+## Generar archivos utm
+
+
+
+```{r 202_Iso_to_UTM}
+isocronas_utm <- isocronas_union |> 
+  st_transform(25830)
+```
+
+
+
+
+
+
+
+### Guardar las capas
+
+
+
+
+## Leaflet
+
+Definir colores y niveles
+
+
+```{r 201_colors}
+niveles_clase <- c(
+  "Bueno",
+  "Regular",
+#  "Malo",
+#  "Muy Malo",
+  "Sin datos"
+)
+
+colores_clase <- c(
+  "Bueno"     = "#1a9850",  # verde
+  "Regular"= "#fee08b",  # amarillo
+#  "Malo"     = "#f46d43",  # naranja
+#  "Muy Malo" = "#d73027",  # rojo
+  "Sin datos"= "#cccccc"   # gris
+)
+
+```
+
+Asegurar que Clase es un factor con esos niveles
+
+```{r 201_factor_levels}
+NO2_level <- NO2_sf |>
+  mutate(
+    Clase = factor(Clase, levels = niveles_clase)
+  )
+
+```
+
+Paleta de colores
+
+```{r}
+pal <- leaflet::colorFactor(
+  palette = colores_clase,
+  domain  = niveles_clase,
+  na.color = "#cccccc"
+)
+
+```
+
+```{r}
+map_leaflet <- leaflet() |>
+  addProviderTiles(providers$CartoDB.Positron) |>
+
+  # AOI polygon (boundary only)
+  addPolygons(
+    data = st_transform( aoi, crs = 4326),
+    fill = FALSE,
+    color = "#2b2b2b",
+    weight = 2,
+    group = params$aoi
+  ) |>
+
+  # NO2 points layer
+  addCircleMarkers(
+    data = st_transform(NO2_level, crs = 4326),
+    radius = 5,
+    fillColor = ~pal(Clase),
+    fillOpacity = 0.8,
+    color = "#333333",
+    weight = 0.5,
+    group = "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>"
+  ) |>
+
+  # Legend (NO2 only)
+  addLegend( 
+    pal = pal,
+    values = niveles_clase,
+    title = htmltools::HTML(
+      "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>"
+      ),
+    opacity = 1,
+    group = "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>"
+    )|>
+
+  # Layer control
+  addLayersControl(
+    overlayGroups = c(
+      params$aoi,
+      "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>"
+    ),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+
+map_leaflet
+
+```
+
+```{r}
+
+# Color palette for NO2 classes
+pal <- colorFactor(
+  palette = "YlOrRd",
+  domain  = NO2_sf$Clase
+)
+
+map_leaflet <- leaflet() |>
+  addProviderTiles(providers$CartoDB.Positron) |>
+
+  # AOI polygon (boundary only)
+  addPolygons(
+    data = st_transform( aoi, crs = 4326),
+    fill = FALSE,
+    color = "#2b2b2b",
+    weight = 2,
+    group = params$aoi
+  ) |>
+
+  # NO2 points layer
+  addCircleMarkers(
+    data = st_transform(NO2_sf, crs = 4326),
+    radius = 5,
+    fillColor = ~pal(Clase),
+    fillOpacity = 0.8,
+    color = "#333333",
+    weight = 0.5,
+    group = "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>"
+  ) |>
+
+  # Legend (NO2 only)
+  addLegend( 
+    pal = pal,
+    values = NO2_sf$Clase,
+    title = htmltools::HTML(
+      "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>"
+      ),
+    group = "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>"
+    )|>
+
+  # Layer control
+  addLayersControl(
+    overlayGroups = c(
+      params$aoi,
+      "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>"
+    ),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+
+map_leaflet
+
+```
+
+## Mapview
+
+```{r}
+# mapview w list of objects
+mapview(list(aoi, NO2_sf),
+        zcol = list(NULL, "Clase"),
+        legend = list(TRUE, TRUE),
+        homebutton = list(FALSE, TRUE))
+```
+
+```{r}
+map <- mapview(list(aoi, NO2_sf),
+        layer.name = c(
+          "Barakaldo",
+          "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>"
+          ),
+        zcol = list(NULL, "Clase"),
+        legend = list(TRUE, TRUE),
+        homebutton = list(FALSE, TRUE))
+map
+```
+
+```{r}
+path_map <- paste0("../../resultados/",
+                       params$year,
+                       "_", params$aoi,
+                       "/")
+```
+
+```{r}
+
+#Crear carpeta si no existe
+
+dir.create(
+  path_map,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+```{r}
+
+### Salva el mapa en un html --------------
+htmlwidgets::saveWidget(
+  map@map,
+  file = paste0(
+    path_map,
+    params$aoi,
+    "_",
+    params$year,
+    "_medidas.html"
+  )
+)
+
+```
+
+## BUFFERS
+
+```{r}
+distancias <- c(10, 25, 50, 100, 250, 500)
+```
+
+
+
+```{r}
+buffers <- NO2_sf |> 
+  # 1. Pasamos a un sistema métrico local (ETRS89 / UTM 30N) para que "dist" sean metros reales
+  st_transform(crs = 25830) |> 
+  
+  # 2. Multiplicamos cada punto por las distancias del vector
+  crossing(distancia = distancias) |> 
+  
+  # 3. Calculamos el buffer en metros de forma exacta
+  mutate(geometry = st_buffer(geometry, dist = distancia)) |> 
+  
+  # 4. Volvemos a convertir a objeto sf explícito
+  st_sf() |> 
+  
+  # 5. ¡Crucial para Leaflet! Devolvemos los buffers finales a coordenadas geográficas
+  st_transform(crs = 4326)
+```
+
+
+
+
+```{r}
+mapview(buffers, 
+        zcol = "NO2", legend = TRUE)
+```
+
+
+```{r}
+buffers |> 
+  ggplot() +
+  geom_sf(data=aoi)+
+  geom_sf(aes(fill = NO2))+
+  facet_wrap(~distancia)
+```
+
+
+
+
+
+
+```{r 201_buff_union_by_dist_clase}
+#### Unión de buffers por Distancia y Clase
+
+
+# Unir las geometrías de los buffers agrupadas por distancia y clase de NO2
+buffers_union <- buffers |> 
+  # Asegurar que todas las geometrías de los buffers sean válidas antes de unir
+  mutate(geometry = st_make_valid(geometry)) |> 
+  
+  # Agrupamos por los dos criterios simultáneamente
+  group_by(distancia, Clase) |> 
+  
+  # Unimos los polígonos que compartan misma distancia y clase
+  summarise(geometry = st_union(geometry), .groups = "drop")
+
+# Ver el resultado en la consola
+buffers_union
+```
+
+
+
+# ----------------------------------------------------------------------
+
+```{r}
+# 1. Definimos tu paleta de colores manual tal como la usas en Leaflet
+colores_calidad <- c(
+  "Bueno" = "forestgreen",
+  "Regular" = "yellow",
+  "Inaceptable" = "red"
+)
+```
+
+
+```{r}
+# 1. Aseguramos que la distancia se pinte con la etiqueta "m" en el facet_wrap
+buffers_grafico <- buffers_union |> 
+  mutate(distancia_label = paste(distancia, "metros")) |> 
+  # Ordenamos el factor para que los mapas sigan el orden lógico de tamaño
+  mutate(distancia_label = reorder(distancia_label, distancia))
+
+ggplot() +
+  # Dibujamos el municipio de fondo en gris claro
+  geom_sf(data = st_transform(aoi, crs = 4326),
+          fill = "grey95",
+          color = "grey70",
+          size = 0.3) +
+  
+  # Dibujamos los buffers de las clases de NO2
+  geom_sf(data = buffers_grafico,
+          aes(fill = Clase),
+          color = "white",
+          lwd = 0.1,
+          alpha = 0.7) +
+  
+  # Paleta de colores para la Clase 
+  scale_fill_manual(values = colores_calidad, name = "Calidad del Aire (NO₂)")+
+  
+  # Dividimos en cuadrículas por cada distancia
+  facet_wrap(~distancia_label, ncol = 3) +
+  
+  # Estética limpia
+  labs(
+    title = paste("Áreas de influencia (Buffers) -", params$aoi),
+    subtitle = paste("Análisis por distancias concéntricas para el año", params$year),
+    x = NULL, y = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(face = "bold", size = 10), # Destacar los títulos de cada mapa
+    panel.grid = element_blank() # Limpiar rejillas de coordenadas para que destaque el mapa
+  )
+```
+
+
+
+
+
+```{r 201_ggplot_BUFFES_union}
+ggplot() +
+  geom_sf(data = aoi) +
+  geom_sf(data = buffers_union, aes(fill= Clase)) +
+  scale_fill_viridis_d(name = "Clase") +
+  facet_wrap(~distancia, ncol=3, )+
+  theme_minimal()
+
+```
+
+### Buffers leafmap
+
+```{r}
+# 1. Definimos la paleta de colores para los buffers (igual que en tu ggplot)
+colores_calidad <- c(
+  "Bueno" = "forestgreen",
+  "Regular" = "yellow",
+  "Inaceptable" = "red"
+)
+pal_buffers <- colorFactor(palette = colores_calidad,
+                           levels = names(colores_calidad))
+```
+
+
+
+## Polígonos de Voronoi
+
+Necesitamos en UTM para que las distancias sean correctas
+
+
+```{r}
+NO2_utm <- NO2_sf |> 
+  st_transform(25830)
+```
+
+```{r}
+union_NO2 <- st_union(NO2_utm)
+```
+
+
+```{r}
+voronoi_grid_NO2 <- st_voronoi(union_NO2)
+```
+
+
+
+```{r}
+voronoi_sf <- st_collection_extract(voronoi_grid_NO2)  |> 
+  st_sf()  |> 
+  st_intersection(st_transform(aoi, 25830)) |> 
+  st_join(NO2_utm, join = st_contains)
+
+
+```
+
+
+
+```{r}
+mapview(voronoi_sf)
+```
+
+
+
+```{r}
+# mapview w list of objects
+mapview(list(aoi, voronoi_sf),
+        zcol = list(NULL, "Clase"),
+        legend = list(TRUE, TRUE),
+        homebutton = list(FALSE, TRUE))
+```
+
+### Guardar Voronoi
+
+Se va a generar un gpkg con tantas capas como **Clases** haya
+
+
+
+```{r 201_capas_voronoi_creation}
+capas_voronoi <- split(voronoi_sf, voronoi_sf$Clase)
+# mapview(capas_voronoi)
+names(capas_voronoi)
+```
+
+```{r 201_guardar_voronoi}
+# Guardar cada capa en el mismo geopackage
+for (nombre_capa_voronoi in names(capas_voronoi)) {
+  st_write(
+    capas_voronoi[[nombre_capa_voronoi]],
+    paste0(path_process,"voronoi_", params$aoi,".gpkg"),
+    layer = nombre_capa_voronoi,
+    append = FALSE
+  )
+}
+```
+
+
+
+## Mapa final
+
+```{r}
+# Aseguramos la creación de punto_rebelde usando tu objeto base filtrado
+punto_rebelde <- st_transform(NO2_exterior, crs = 4326) |> 
+  filter(Escuela == "Las tres cruces")
+```
+
+
+```{r}
+
+erandio_map <- mapview(aoi)+
+mapview(isocronas_union,
+        zcol="Clase", 
+        col.regions = c(#"Inaceptable" = "red",
+                        "Bueno" = "forestgreen",
+                        "Regular" = "yellow"
+                        )
+        ) +
+  mapview(voronoi_sf,
+        zcol = "Clase", 
+        col.regions = c(#"Inaceptable" = "red",
+                        "Bueno" = "forestgreen",
+                        "Regular" = "yellow"
+                        ),
+        legend =  TRUE,
+        homebutton = TRUE)+
+  mapview(NO2_exterior_utm,
+        zcol = "Clase", 
+        col.regions = c(#"Inaceptable" = "red",
+                        "Bueno" = "lightgreen",
+                        "Regular" = "orange"
+                        ),
+        legend =  TRUE,
+        homebutton = TRUE)
+
+erandio_map
+```
+
+```{r paletas_leaflet}
+pal_isocronas <- colorFactor(
+  palette = c("forestgreen", "yellow"),
+  domain = isocronas_union$Clase
+)
+
+
+
+pal_voronoi <- colorFactor(
+  palette = c("forestgreen", "yellow"),
+  domain = voronoi_sf$Clase
+)
+
+
+pal_no2 <- colorFactor(
+  palette = c("lightgreen", "orange"),
+  domain = NO2_exterior_utm$Clase
+)
+```
+
+```{r}
+names(NO2_level)
+```
+
+
+```{r}
+map_leaflet <- leaflet() |>
+  
+  setView(lng = -2.97859871 , lat = 43.31310218, zoom = 14) |> 
+  
+  # mapas base
+  
+  addTiles(group = "OSM") |> 
+  addProviderTiles(providers$CartoDB, 
+                   group = "CartoDB")  |>
+  addProviderTiles(providers$Esri.WorldImagery,
+                   group = "WorldImagery") |> 
+
+  #---------------------------------
+  
+    # AOI polygon (boundary only)
+  addPolygons(
+    data = st_transform( aoi, crs = 4326),
+   # fill = "wheat",
+    color = "darkblue",
+    weight = 2,
+    group = params$aoi
+  ) |> 
+  
+
+  # Capa: Voronoi
+  addPolygons(data = st_transform(voronoi_sf, crs = 4326),
+              color = ~pal_voronoi(Clase),
+              weight = 1,
+              fillColor = ~pal_voronoi(Clase),
+              fillOpacity = 0.6,
+              group = "Voronoi",
+              label = ~paste("Voronoi:", Clase)) |> 
+  
+  
+#---------------------------------
+# NO2 isocronas layer
+ addPolygons(
+    data = st_transform(isocronas_union, crs = 4326),
+    color = ~pal_isocronas(Clase),
+              weight = 1,
+              fillColor = ~pal_isocronas(Clase),
+              fillOpacity = 0.7,
+              group = "Isocronas",
+              label = ~paste("Isocrona:", Clase)
+  ) |>
+
+  # NO2 points layer
+  addCircleMarkers(
+    data = st_transform(NO2_level, crs = 4326),
+    radius = 5,
+    fillColor = ~pal_no2(Clase),
+    fillOpacity = 0.8,
+    color = "#333333",
+    weight = 0.5,
+    group = "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>",
+    label = ~paste("NO2:", Clase),
+     popup = ~paste(
+    "<b>🏫", Escuela, "</b><br>",
+    "<b>💨 NO₂:</b> ", round(NO2, 1), " µg/m³<br>",
+    "<b>📍", position, "</b><br>",
+    "<b>⭐", Clase, "</b>")
+  ) |>
+#---------------------------------
+
+# NUEVA CAPA: Destacar el punto desplazado de la red vial
+  addAwesomeMarkers(
+    data = punto_rebelde,
+    icon = makeAwesomeIcon(icon = "info-sign", markerColor = "orange", iconColor = "white"),
+    group = "Punto de control (Red vial)",
+    popup = ~paste(
+      "<b>⚠️ Nota de Enrutamiento:</b><br>",
+      "<b>🏫 Lugar:</b> ", Escuela, "<br>",
+      "El punto original se encuentra fuera de su isócrona debido a que el motor ",
+      "de cálculo (ORS) tuvo que desplazar (<i>snapping</i>) el origen virtual a la ",
+      "vía peatonal transitable más cercana en OpenStreetMap."
+    )
+  ) |>
+
+
+#---------------------------------
+
+  # Legend (NO2 only)
+  addLegend( 
+    pal = pal_no2,
+    values = niveles_clase,
+    title = htmltools::HTML(
+      "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>"
+      ),
+    opacity = 1,
+    group = "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>"
+    )|>
+
+  
+   addLegend(position = "topright",
+            pal = pal_isocronas,
+            values = isocronas_union$Clase,
+            title = "Isocronas",
+            group = "Isocronas",
+            opacity = 0.7)  |> 
+  
+  
+  addLegend(position = "topright",
+            pal = pal_voronoi,
+            values = voronoi_sf$Clase,
+            title = "Voronoi",
+            group = "Voronoi",
+            opacity = 0.6)  |> 
+#----------------------------------------------------------  
+  # Layer control
+  addLayersControl(
+    position = "topleft",
+    baseGroups = c("CartoDB", "OSM", "WorldImagery"),
+    overlayGroups = c(
+      params$aoi,
+      "Isocronas",
+      "Voronoi",
+      "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>",
+      "Punto de control (Red vial)" # <- Añadido al panel de control
+    ),
+    options = layersControlOptions(collapsed = FALSE, 
+                                   autoZIndex = TRUE)
+
+  ) |> 
+  #----------------------------------------------------------  
+  # Mini mapa
+  addMiniMap(toggleDisplay = TRUE,
+             position = "bottomleft") |> 
+  
+  # Medición de distancias
+  addMeasure(position = "topleft",
+             primaryLengthUnit = "meters",
+             primaryAreaUnit = "sqmeters") |> 
+  # Búsqueda
+#  addSearchOSM()  |> 
+  
+  # Botón de reinicio
+  addResetMapButton()
+
+map_leaflet
+
+```
+
+
+```{r}
+# map <- map_POP3
+### Salva el mapa en un html --------------
+
+
+htmlwidgets::saveWidget(
+  map_leaflet,
+  file = paste0(
+    path_map,
+    params$aoi,
+    "_",
+    params$year,
+    "_Calidad_Ambiental.html"
+  )
+)
+
+```
+
+
+
+
+### con buffer
+
+```{r}
+# 1. Definimos la paleta de colores para los buffers (igual que en tu ggplot)
+colores_calidad <- c(
+  "Bueno" = "forestgreen",
+  "Regular" = "yellow",
+  "Inaceptable" = "red"
+)
+pal_buffers <- colorFactor(palette = colores_calidad, levels = names(colores_calidad))
+
+# 2. Aislamos el punto rebelde (por si acaso, garantizamos su creación)
+punto_rebelde <- st_transform(NO2_exterior, crs = 4326) |> 
+  filter(grepl("cruces", Escuela, ignore.case = TRUE))
+```
+
+
+```{r map_leaflet_completo}
+
+
+# 3. Construimos el mapa interactivo
+map_leaflet2 <- leaflet() |>
+  
+  setView(lng = -2.97859871 , lat = 43.31310218, zoom = 14) |> 
+  
+  # Mapas base
+  addTiles(group = "OSM") |> 
+  addProviderTiles(providers$CartoDB, group = "CartoDB") |>
+  addProviderTiles(providers$Esri.WorldImagery, group = "WorldImagery") |> 
+
+  #----------------------------------------------------------
+  # Capa: Límite del Municipio (AOI)
+  addPolygons(
+    data = st_transform(aoi, crs = 4326),
+    color = "darkblue",
+    weight = 2,
+    group = params$aoi
+  ) |> 
+
+  # Capa: Voronoi
+  addPolygons(data = st_transform(voronoi_sf, crs = 4326),
+              color = ~pal_voronoi(Clase),
+              weight = 1,
+              fillColor = ~pal_voronoi(Clase),
+              fillOpacity = 0.4,
+              group = "Voronoi",
+              label = ~paste("Voronoi:", Clase)) |> 
+  
+  # Capa: Isócronas (Red Vial)
+  addPolygons(
+    data = st_transform(isocronas_union, crs = 4326),
+    color = ~pal_isocronas(Clase),
+    weight = 1,
+    fillColor = ~pal_isocronas(Clase),
+    fillOpacity = 0.6,
+    group = "Isocronas",
+    label = ~paste("Isocrona:", Clase)
+  ) |>
+
+  #----------------------------------------------------------
+  # NUEVAS CAPAS: Añadir los buffers por cada distancia de forma dinámica
+  # Usamos un bucle purrr::walk para inyectar cada distancia como una capa separada
+  # Nota: Las dejamos ocultas por defecto para no saturar el mapa al abrirlo
+  
+  addPolygons(data = filter(buffers_union, distancia == 10),
+              color = ~pal_buffers(Clase), weight = 1, fillColor = ~pal_buffers(Clase),
+              fillOpacity = 0.3, group = "Buffer 10m", label = ~paste("Buffer 10m:", Clase)) |> 
+  addPolygons(data = filter(buffers_union, distancia == 25),
+              color = ~pal_buffers(Clase), weight = 1, fillColor = ~pal_buffers(Clase),
+              fillOpacity = 0.3, group = "Buffer 25m", label = ~paste("Buffer 25m:", Clase)) |> 
+  addPolygons(data = filter(buffers_union, distancia == 50),
+              color = ~pal_buffers(Clase), weight = 1, fillColor = ~pal_buffers(Clase),
+              fillOpacity = 0.3, group = "Buffer 50m", label = ~paste("Buffer 50m:", Clase)) |> 
+  addPolygons(data = filter(buffers_union, distancia == 100),
+              color = ~pal_buffers(Clase), weight = 1, fillColor = ~pal_buffers(Clase),
+              fillOpacity = 0.3, group = "Buffer 100m", label = ~paste("Buffer 100m:", Clase)) |> 
+  addPolygons(data = filter(buffers_union, distancia == 250), # por si acaso mantienes el 250/255 de tu vector
+              color = ~pal_buffers(Clase), weight = 1, fillColor = ~pal_buffers(Clase),
+              fillOpacity = 0.3, group = "Buffer 250m", label = ~paste("Buffer 250m:", Clase)) |> 
+  addPolygons(data = filter(buffers_union, distancia == 500),
+              color = ~pal_buffers(Clase), weight = 1, fillColor = ~pal_buffers(Clase),
+              fillOpacity = 0.2, group = "Buffer 500m", label = ~paste("Buffer 500m:", Clase)) |> 
+
+  #----------------------------------------------------------
+  # Capa: Puntos de medición (NO2)
+  addCircleMarkers(
+    data = st_transform(NO2_level, crs = 4326),
+    radius = 5,
+    fillColor = ~pal_no2(Clase),
+    fillOpacity = 0.8,
+    color = "#333333",
+    weight = 0.5,
+    group = "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>",
+    label = ~paste("NO2:", Clase),
+    popup = ~paste(
+      "<b>🏫", Escuela, "</b><br>",
+      "<b>💨 NO₂:</b> ", round(NO2, 1), " µg/m³<br>",
+      "<b>📍", position, "</b><br>",
+      "<b>⭐", Clase, "</b>")
+  ) |>
+  
+  # Capa de Control Especial: Marcador para "Las tres cruces"
+  addAwesomeMarkers(
+    data = punto_rebelde,
+    icon = makeAwesomeIcon(icon = "info-sign", markerColor = "orange", iconColor = "white"),
+    group = "Punto de control (Red vial)",
+    popup = ~paste(
+      "<b>⚠️ Nota de Enrutamiento:</b><br>",
+      "<b>📍 Lugar:</b> ", Escuela, "<br>",
+      "El punto original se encuentra fuera de su isócrona debido a que el motor ",
+      "de cálculo (ORS) tuvo que desplazar (<i>snapping</i>) el origen virtual a la ",
+      "vía peatonal transitable más cercana en OpenStreetMap."
+    )
+  ) |>
+
+  #----------------------------------------------------------
+  # Leyendas
+  addLegend( 
+    pal = pal_no2,
+    values = niveles_clase,
+    title = htmltools::HTML("NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>"),
+    opacity = 1,
+    group = "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>"
+  ) |>
+
+  addLegend(position = "topright",
+            pal = pal_isocronas,
+            values = isocronas_union$Clase,
+            title = "Isocronas",
+            group = "Isocronas",
+            opacity = 0.7)  |> 
+  
+  addLegend(position = "topright",
+            pal = pal_voronoi,
+            values = voronoi_sf$Clase,
+            title = "Voronoi",
+            group = "Voronoi",
+            opacity = 0.6)  |> 
+  
+  #----------------------------------------------------------  
+  # Panel de Control de Capas (Modificado)
+  addLayersControl(
+    position = "topleft",
+    baseGroups = c("CartoDB", "OSM", "WorldImagery"),
+    overlayGroups = c(
+      params$aoi,
+      "Isocronas",
+      "Voronoi",
+      "Buffer 10m",
+      "Buffer 25m",
+      "Buffer 50m",
+      "Buffer 100m",
+      "Buffer 250m",
+      "Buffer 500m",
+      "NO<sub>2</sub>:&nbsp;&micro;g/m<sup>3</sup>",
+      "Punto de control (Red vial)"
+    ),
+    options = layersControlOptions(collapsed = TRUE, autoZIndex = TRUE) # Collapsed = TRUE para que no ocupe toda la pantalla tanta capa
+  ) |> 
+  
+  # Ocultar los buffers por defecto al cargar el mapa para que la vista inicial sea limpia
+  hideGroup(c("Buffer 10m", "Buffer 25m", "Buffer 50m", "Buffer 100m", "Buffer 250m", "Buffer 500m")) |> 
+  
+  #----------------------------------------------------------  
+  # Complementos del mapa
+  addMiniMap(toggleDisplay = TRUE, position = "bottomleft") |> 
+  addMeasure(position = "topleft", primaryLengthUnit = "meters", primaryAreaUnit = "sqmeters") |> 
+  addResetMapButton()
+
+map_leaflet2
+```
+
+
+
+```{r}
+# map <- map_POP3
+### Salva el mapa en un html --------------
+
+
+htmlwidgets::saveWidget(
+  map_leaflet2,
+  file = paste0(
+    path_map,
+    params$aoi,
+    "_",
+    params$year,
+    "_Calidad_Ambiental. Accesibilidad e Impacto.html"
+  )
+)
+
+```

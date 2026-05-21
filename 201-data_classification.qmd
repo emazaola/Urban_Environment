@@ -14,7 +14,7 @@ library(tidyverse)
 library(sf)
 library(sfarrow) ## para guardar como geoparquet
 
-library(openrouteservice)
+
 
 library(mapview)
 library(here)
@@ -321,6 +321,7 @@ NO2_exterior_4326 <- NO2_exterior |>
 ```{r 201-geoparquet}
 # 1. Metemos los objetos en una lista dándoles un nombre
 lista_sf <- list(
+  "aoi" = aoi,
   "NO2_interior_utm" = NO2_interior_utm,
   "NO2_interior_4326" = NO2_interior_4326,
   "NO2_exterior_utm" = NO2_exterior_utm,
