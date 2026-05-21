@@ -1,0 +1,61 @@
+h1 {
+  color: #2ba18a;
+  font-size: 36px;
+}
+
+h2 {
+  color: #2ba18a;
+  font-size: 28px;
+  border-bottom: 2px solid #ecf0f1;
+}
+
+h3 {
+  color: #2ba18a;
+  font-size: 24px;
+}
+
+h1::before,
+h2::before,
+h3::before {
+  color: #2ba18a;
+}
+
+
+.header-section-number {
+  color: #2ba18a;
+}
+
+h1 .header-section-number,
+h2 .header-section-number,
+h3 .header-section-number {
+  color: #2ba18a;
+}
+
+/* Si usas barra lateral, el título suele estar en .sidebar-title */
+.sidebar-title {
+  font-weight: bold !important;
+  font-size: 1.8rem !important;
+  color: #27893e; /* Opcional: el color que prefieras */
+}
+
+/* Ajustar el contenedor de autor y fecha */
+.quarto-title-meta {
+  display: grid;
+  grid-template-columns: 1fr auto; /* Crea dos columnas: una para datos, otra para el logo */
+  align-items: center;
+  border-top: 1px solid #eee; /* Opcional: una línea divisoria */
+  padding-top: 10px;
+}
+
+/* Insertar el logo a la derecha del bloque de metadatos */
+.quarto-title-meta::after {
+  content: "";
+  background-image: url('images/GISARTE_grande.png');
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: right;
+  width: 120px; /* Ajusta el ancho de tu logo */
+  height: 80px;  /* Ajusta el alto de tu logo */
+  grid-column: 2;
+  grid-row: 1 / span 3; /* Hace que el logo cubra las filas de autor y fecha */
+}

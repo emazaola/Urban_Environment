@@ -1,0 +1,71 @@
+project:
+  type: book
+  output-dir: "../docs"
+
+book:
+  title: "Análisis Ambiental Urbano"
+  description: "Información ambiental obtenida de la constelación Copernicus"
+  # Configuración de la barra de navegación superior
+  sidebar:
+    style: "floating"
+    search: true
+    chapters:
+      - index.qmd
+      - part: "Inicio"
+        chapters:
+          - 10-recursos.qmd
+#      - part: "DIVISIONES ADMINISTRATIVAS"
+#        chapters:
+#          - 100-_Divisiones Euskadi.qmd
+#          - 101-proceso_01.qmd
+#          - 102-proceso_02.qmd
+      - part: "CONTAMINACIÓN NO2"
+        chapters:
+           - 201-data_classification.qmd
+#           - 20-RSI_Sentinel2.qmd
+#      - part: "FAUNA"
+#        chapters:
+#          - 50-fauna.qmd
+#      - part: "MEDIO SOCIO-ECONÓMICO"
+#        chapters:
+#          - 50-demografia.qmd
+#          - 10-socio-economic.qmd
+#          - 20-LCLU.qmd
+#          - 20-paisaje.qmd
+#          - 10-infraestructuras.qmd
+#          - 20-patrimonio.qmd
+
+execute:
+  warning: false
+  message: false
+
+
+# Configuración compartida para todos los documentos
+author: "Gisarte"
+date: "2026-05-21"
+bibliography: references.bib
+
+format:
+  html:
+    css: custom.css
+    theme: flatly
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    # Esto ayuda a que el título del proyecto aparezca en la barra si usas un sitio web, 
+    # o puedes definir títulos individuales en cada .qmd
+    
+
+editor: source  
+
+lang: es
+language:
+  en:
+    toc-title-document: "Table of contents"
+    title-block-author-single: "Author"
+    title-block-author-plural: "Authors"
+  es:
+    toc-title-document: "Tabla de contenidos"
+    title-block-author-single: "Autor"
+    title-block-author-plural: "Autores"
+

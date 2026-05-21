@@ -1,0 +1,23 @@
+---
+title: "Recusos utilizados"
+---
+
+## Recursos
+
+### XXXXXXXX
+
+  
+
+### XXXXXXXXs
+
+[Copernicus Data Space Ecosystem (CDSE)](https://dataspace.copernicus.eu)
+
+### R libraries
+
+[CDSE - Copernicus Data Space Ecosystem API Wrapper](https://zivankaraman.github.io/CDSE/)
+
+```{r}
+# install.packages("remotes")
+
+# remotes::install_github("zivankaraman/CDSE")
+```

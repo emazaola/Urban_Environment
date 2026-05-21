@@ -1,0 +1,261 @@
+---
+title: "Clasificación Medicciones NO2"
+params:
+  aoi: "Erandio"
+  year: 2026
+---
+
+## librerias
+
+```{r, echo=FALSE, warning=FALSE}
+library(readxl)
+library(tidyverse)
+library(sf)
+
+library(openrouteservice)
+
+library(mapview)
+library(here)
+
+
+
+
+library(leaflet)
+library(leaflet.extras)
+library(htmlwidgets)
+library(htmltools)
+
+library(maptiles)
+library(tidyterra)
+```
+
+## Fijar rutas
+
+```{r data_path}
+geodata_path <- here("../../10_data/geodata/geoeuskadi//")
+data_path <- here("../../10_data/numeric-data//")
+
+```
+
+
+## Cargar datos
+
+La zona de interés
+
+```{r 201aoi}
+
+
+aoi <- read_sf(here(paste0(geodata_path, "MUNICIPIOS_5000_ETRS89/MUNICIPIOS_5000_ETRS89.shp"))) |> 
+
+  filter(NOMBRE_TOP== params$aoi)|> 
+  select(c("NOMBRE_TOP", "MUN_MUNI", "geometry"))|> 
+  select(c("NOMBRE_TOP", "geometry"))
+
+
+# st_crs(aoi)
+
+aoi$NOMBRE_TOP <- params$aoi
+
+# mapview(aoi)
+```
+
+Los datos de las mediciones de NO2.
+
+
+
+```{r 201load_no2, message=FALSE, warning=FALSE}
+NO2 <- read_excel(paste0(data_path,"revision.datos_campana-2025-2026_revisado.xlsx"))
+
+names(NO2)
+```
+
+
+
+```{r 201names_select}
+NO2 <-NO2 |> 
+  filter(municipio_mapa  == params$aoi) |> 
+  select(c("no2",
+            "que_medimos"   ,
+           "lugar_original"  ,
+            "codigo_tubo"    ,
+            "latitude"   , 
+            "longitude"  ,
+           # "que_medimos" ,"Escuela", "latitude", "longitude"
+            ))
+  
+  
+  
+ 
+names(NO2) <- c(
+  "NO2", "position", "Escuela", "id",  "latitude", "longitude"
+  )
+```
+
+
+
+Eliminar los registros sin coordenadas y sin datos
+
+```{r 201_filter}
+ NO2 <- NO2  |> 
+  filter(!is.na(latitude)) |> 
+  filter(!is.na(longitude)) |> 
+  filter(!is.na(NO2))|> 
+  mutate(NO2 = round(NO2, 2)) # Redondear las medidas de NO2
+```
+
+
+Incorporar la clasificación.
+
+Clasificar en: Bueno, Regular, Inaceptable
+
+```{r 201_classify}
+
+NO2 <- NO2 |> mutate(
+  Clase=case_when(
+    NO2 <= 20 ~ "Bueno",
+    NO2 > 20 & NO2 <=40~ "Regular",
+  # NO2 > 20 & NO2 <=30~ "Malo",
+    NO2 > 40 ~ "Inaceptable",
+    TRUE ~ "Sin datos"
+    )
+  )
+```
+
+
+### Crear un objeto sf
+
+```{r 102_sf_creation}
+# Create the sf object
+NO2_sf <- st_as_sf(
+  NO2, 
+  coords = c("longitude", "latitude"), 
+  crs = 4326,
+  remove = FALSE  # ← Esto mantiene las columnas originales: Así luego se pueden usar
+)|> 
+  rename("lon" =  "longitude" ,
+         "lat" = "latitude" )
+
+```
+
+```{r}
+mapview(NO2_sf, 
+        zcol = "Clase"
+        )
+```
+
+
+
+## Eliminar errores y estaciones de medición repetidas
+
+```{r 201_unique_position}
+unique(NO2$position)
+```
+
+### Estación Oficial
+
+
+```{r}
+oficial <- NO2_sf |> 
+  filter(position==   "Estación Oficial")
+```
+
+Si hay varias medidas de una estación, calculamos la media
+
+
+```{r}
+oficial <- oficial  |> 
+  group_by(position, 
+           # Campaña, Barrio, position, lugar ==> elegir los campos según la información disponible
+           )|>
+  summarise(
+    NO2 = mean(NO2, na.rm = TRUE),
+    lat = mean(lat,  na.rm = TRUE),
+    lon = mean(lon,  na.rm = TRUE),
+    geometry = st_centroid(st_union(geometry))
+  ) |>
+  ungroup() |>
+  # Convertir explícitamente a POINT (por si acaso)
+  st_cast("POINT")
+    
+    
+   
+
+oficial <- oficial |> 
+  mutate(
+  Clase=case_when(
+    NO2 <= 20 ~ "Bueno",
+    NO2 > 20 & NO2 <=40~ "Regular",
+  # NO2 > 20 & NO2 <=30~ "Malo",
+    NO2 > 40 ~ "Inaceptable",
+    TRUE ~ "Sin datos"
+    )
+  )
+
+
+# mapview(oficial, 
+#        zcol = "Clase"
+#        )
+```
+
+
+### Valores a eliminar
+
+Se eliminan todos los valores que no entran dentro de lo que queremos ver por nuestras mediciones
+
+```{r 201_delete_list}
+eliminar <- c("Estacion oficial",  "ERROR",  "Blanco",
+              "Blanco transporte" ,"Medición oficial (media del periodo)"
+              )
+```
+
+```{r 201_filter_position}
+NO2 <- NO2 |> 
+  filter(!position %in% eliminar)
+```
+
+
+
+### Crear un objeto sf
+
+```{r 201_sf_creation}
+# Create the sf object
+NO2_sf <- st_as_sf(
+  NO2, 
+  coords = c("longitude", "latitude"), 
+  crs = 4326,
+  remove = FALSE  # ← Esto mantiene las columnas originales: Así luego se pueden usar
+)|> 
+  rename("lon" =  "longitude" ,
+         "lat" = "latitude" )
+
+```
+
+```{r}
+mapview(NO2_sf, 
+        zcol = "Clase"
+        )
+```
+
+```{r 201_unique_position2}
+unique(NO2_sf$position)
+```
+
+Los interiores son los que **position = Interior escolar**
+
+```{r 201_exterior}
+NO2_exterior <- NO2_sf |> 
+ filter(!position %in% c("Interior escolar"))
+
+# st_crs(NO2_exterior)
+
+```
+
+```{r 201_interior}
+NO2_interior <- NO2_sf |> 
+  filter(position %in% c("Interior escolar"))
+  
+ 
+```
+
+## Guardar como geoparquet
+
