@@ -302,7 +302,7 @@ NO2_exterior_utm <- NO2_exterior |>
 
 Para trabajar con leaflet se necesitará: EPSG:4326 - WGS 84
 
-```{r 201_to_UTM}
+```{r 201_to_WGS84}
 NO2_interior_4326 <- NO2_interior |> 
   st_transform(4326)
 
@@ -315,10 +315,7 @@ NO2_exterior_4326 <- NO2_exterior |>
 
 ```
 
-
-
-
-## Guardar como geoparquet
+## Guardar
 
 
 ```{r 201-geoparquet}
@@ -334,6 +331,35 @@ lista_sf <- list(
 ```
 
 
+
+### Guardar como geopackage
+
+```{r}
+# Definimos el archivo GeoPackage único donde meteremos todas las capas
+ruta_gpkg <- file.path(path_process, "medidas_NO2.gpkg")
+
+# Guardamos cada objeto sf como una capa (layer) diferente dentro del mismo GPKG
+lista_sf |> 
+  iwalk(\(objeto_sf, nombre_capa) {
+    
+    objeto_sf |> 
+      st_write(
+        dsn = ruta_gpkg, 
+        layer = nombre_capa,
+        delete_layer = TRUE,  # Si la capa ya existe, la sobreescribe (evita errores al re-ejecutar)
+        quiet = TRUE          # Evita que el render de Quarto se llene de mensajes de consola
+      )
+      
+  })
+```
+
+
+### Guardar como geoparquet
+
+
+
+
+
 ```{r}
 lista_sf |> 
   iwalk(\(objeto_sf, nombre_archivo) {
@@ -343,6 +369,7 @@ lista_sf |>
       st_write_parquet(ruta_final)
   })
 ```
+
 ```{r}
 # mi_sf_recuperado <- st_read_parquet(file.path(path_process, "NO2_exterior_utm.parquet"))
 ```
