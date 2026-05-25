@@ -1,0 +1,312 @@
+---
+title: "Análisis de Accesibilidad: Polígonos de VORONOI"
+author: "Gisarte"
+date: "`r Sys.Date()`"
+format: html
+params:
+  aoi: "Erandio"
+  year: 2026
+  variable: "no2"
+---
+
+## librerias
+
+
+
+```{r 20-setup}
+
+#| include: false
+#| message: false
+#| warning: false
+#| 
+library(readxl)
+library(tidyverse)
+library(sf)
+library(sfarrow) ## para guardar como geoparquet
+
+library(openrouteservice)
+
+library(mapview)
+library(here)
+
+
+
+
+library(leaflet)
+library(leaflet.extras)
+library(htmlwidgets)
+library(htmltools)
+
+#library(maptiles)
+#library(tidyterra)
+
+
+```
+
+
+
+## Fijar rutas
+
+```{r 204_data_path}
+geodata_path <- here("../../10_data/geodata/geoeuskadi//")
+data_path <- here("../../10_data/numeric-data//")
+
+```
+
+
+
+
+
+```{r 204_path_process}
+path_process <- here(paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "//"))
+path_process
+```
+
+
+Crear directorio
+
+```{r 204_dir_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_process,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+## Cargar datos
+
+La zona de interés
+
+
+```{r 204_cargar_aoi_gpkg}
+# 1. Definimos la ruta al archivo GeoPackage de medidas
+ruta_gpkg <- file.path(path_process, "medidas_NO2.gpkg")
+# ruta_parquet <-  file.path(path_process, "geoparquet/aoi.parquet")
+
+# 2. Leemos la capa "aoi" de forma limpia y silenciosa
+aoi <- st_read(ruta_gpkg, layer = "aoi", quiet = TRUE)
+
+
+
+# mapview(aoi)
+```
+
+
+
+Los datos de las mediciones de NO2.
+
+
+
+```{r 204_ruta_gpkg}
+
+ruta_gpkg <- file.path(path_process, "medidas_NO2.gpkg")
+
+# Cargamos Erandio (AOI) y la capa ya geográfica que preparaste
+
+# aoi <- st_read(ruta_gpkg, layer = "aoi", quiet = TRUE)
+
+no2 <- st_read(ruta_gpkg, layer = "NO2_exterior_4326", quiet = TRUE)
+
+mapview(no2)
+
+```
+
+
+
+
+## Poligonos de VORONOI
+
+Necesitamos en UTM para que las distancias sean correctas
+
+
+```{r}
+no2_utm <- no2 |> 
+  st_transform(25830)
+```
+
+```{r}
+union_no2 <- st_union(no2_utm)
+```
+
+
+```{r}
+voronoi_grid_NO2 <- st_voronoi(union_no2)
+```
+
+
+
+```{r}
+voronoi_sf <- st_collection_extract(voronoi_grid_NO2)  |> 
+  st_sf()  |> 
+  st_intersection(st_transform(aoi, 25830)) |> 
+  st_join(no2_utm, join = st_contains)
+
+
+```
+
+
+
+```{r}
+mapview(voronoi_sf)
+```
+
+
+
+```{r}
+# mapview w list of objects
+mapview(list(aoi, voronoi_sf),
+        zcol = list(NULL, "Clase"),
+        legend = list(TRUE, TRUE),
+        homebutton = list(FALSE, TRUE))
+```
+
+
+
+
+
+## Guardar las capas
+
+### Guardar GPKG
+
+  Guardar UTM
+  
+  
+  
+```{r 204_rutasgpkg}
+# 1. Definimos las rutas absolutas para tus dos GeoPackages
+ruta_gpkg_voronoi <- file.path(path_process, "voronoi.gpkg")
+
+```
+
+
+
+```{r 204_geometrias}
+# --- PREPARACIÓN DE GEOMETRÍAS ---
+# Versión UTM original (métrica)
+voronoi_utm <- voronoi_sf |> 
+  sf::st_transform(crs = 25830)
+
+
+# Versión Geográfica (grados) para Leaflet
+voronoi_geo <- voronoi_sf |> 
+  sf::st_transform(crs = 4326)
+```
+
+
+```{r 204_saveGpkg_utm}
+sf::st_write(
+  voronoi_utm,
+  dsn = ruta_gpkg_voronoi,
+  layer = "voronoi_utm",      # Nombre de la primera capa
+  delete_layer = TRUE,        # Si ya existe esta capa, la sobrescribe
+  quiet = TRUE
+)
+```
+
+
+
+
+  Guardar Geográficas
+
+
+```{r 204_saveGpkg_geo}
+# Guardamos la capa GEO en el mismo archivo físico
+sf::st_write(
+  voronoi_geo,
+  dsn = ruta_gpkg_voronoi,
+  layer = "voronoi_geo",      # Nombre de la segunda capa
+  delete_layer = TRUE,        # Sobrescribe solo esta capa si ya existía
+  quiet = TRUE
+)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Guardar parquet
+
+Creamos el folder geoparquet
+
+```{r}
+path_parquet <- here(paste0(path_process, "geoparquet//"))
+```
+
+
+```{r 204_dir_parquet_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_parquet,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+
+
+```{r 204_remove_parqueto}
+#| warning: false
+#| message: false
+
+
+# --- 0. LIMPIEZA AUTOMÁTICA DE PARQUETS ANTIGUOS ---
+# Buscamos todos los archivos en "path_process" que contengan la palabra "isocrona" y terminen en .parquet
+archivos_antiguos <- list.files(
+  path = path_parquet, 
+  pattern = "buffer.*\\.parquet$",
+  full.names = TRUE
+)
+
+# Si encuentra archivos, los borra del disco de un plumazo
+#if (length(archivos_antiguos_buff) > 0) {
+#  file.remove(archivos_antiguos_buff)
+#}
+
+
+
+```
+
+
+GUARDAR PolÍgonops de VORONOI
+
+```{r 204_guardar_buffers_parquet}
+#| warning: false
+#| message: false
+# 
+suppressWarnings({
+  sfarrow::st_write_parquet(voronoi_geo,
+                            file.path(path_parquet, "voronoi_geo.parquet"))
+  
+  
+  
+  
+  sfarrow::st_write_parquet(voronoi_utm,
+                            file.path(path_parquet, "voronoi_utm.parquet"))
+})
+```
+
+
+
+

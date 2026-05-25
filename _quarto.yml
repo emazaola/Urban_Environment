@@ -19,7 +19,11 @@ book:
     - part: "CONTAMINACIÓN NO2"
       chapters:
         - 201-data_classification.qmd
+    - part: "ZONAS DE EXPOSICIÓN Y PROXIMIDAD"
+      chapters:
         - 202-Isocronas-3k.qmd
+        - 203-Buffers.qmd
+        - 204-Voronoi.qmd
 #        - 20-RSI_Sentinel2.qmd
 #    - part: "FAUNA"
 #      chapters:
