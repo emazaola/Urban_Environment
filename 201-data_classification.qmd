@@ -358,20 +358,76 @@ lista_sf |>
 ### Guardar como geoparquet
 
 
+Creamos el folder geoparquet
+
+```{r}
+path_parquet <- paste0(path_process, "geoparquet/")
+```
+
+
+```{r 202_dir_parquet_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_parquet,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+
 
 
 
 ```{r}
+#| warning: false
+#| message: false
+
+# --- 0. LIMPIEZA AUTOMÁTICA DE PARQUETS ANTIGUOS ---
+# Buscamos todos los archivos en "path_process" que contengan la palabra "isocrona" y terminen en .parquet
+archivos_antiguos <- list.files(
+  path = path_parquet, 
+  pattern = "NO2.*\\.parquet$", 
+  full.names = TRUE
+)
+
+# Si encuentra archivos, los borra del disco de un plumazo
+if (length(archivos_antiguos) > 0) {
+  file.remove(archivos_antiguos)
+}
+
+
+# 1. Guardamos las isocronas geográficas (4326) por separado
 lista_sf |> 
   iwalk(\(objeto_sf, nombre_archivo) {
-    ruta_final <- file.path(path_process, paste0(nombre_archivo, ".parquet"))
+    ruta_final <- file.path(path_parquet, paste0(nombre_archivo, ".parquet"))
     
     objeto_sf |> 
       st_write_parquet(ruta_final)
   })
+
+
+
 ```
+
+
+
+
 
 ```{r}
 # mi_sf_recuperado <- st_read_parquet(file.path(path_process, "NO2_exterior_utm.parquet"))
 ```
+
+
+
+
+
+
+
+
+
+
+
+
 
