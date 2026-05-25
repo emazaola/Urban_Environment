@@ -1,0 +1,364 @@
+---
+title: "Análisis de Accesibilidad: Isocronas de Contaminación"
+author: "Gisarte"
+date: "`r Sys.Date()`"
+format: html
+params:
+  aoi: "Erandio"
+  year: 2026
+  variable: "no2"
+---
+
+## librerias
+
+
+
+```{r setup}
+
+#| include: false
+#| message: false
+#| warning: false
+ 
+library(tidyverse)
+library(sf)
+library(sfarrow) ## para guardar como geoparquet
+
+
+library(mapview)
+library(here)
+
+
+library(leaflet)
+library(leaflet.extras)
+library(htmlwidgets)
+library(htmltools)
+
+```
+
+
+
+## Fijar rutas
+
+```{r data_path}
+geodata_path <- here("../../10_data/geodata/geoeuskadi//")
+data_path <- here("../../10_data/numeric-data//")
+
+```
+
+
+
+
+
+```{r 202_path_process}
+path_process <- paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "//")
+path_process
+```
+
+
+Crear directorio
+
+```{r 202_dir_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_process,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+## Cargar datos
+
+La zona de interés
+
+
+
+```{r 203_ruta_gpkg}
+
+ruta_gpkg <- file.path(path_process, "medidas_NO2.gpkg")
+```
+
+
+```{r 203_aoi}
+aoi <- st_read(ruta_gpkg, layer = "aoi", quiet = TRUE)
+# st_crs(aoi)
+
+
+
+no2 <- st_read(ruta_gpkg,
+               layer = "NO2_exterior_4326",
+               quiet = TRUE)
+
+# mapview(aoi)
+```
+
+Los datos de las mediciones de NO2.
+
+
+
+
+
+## BUFFERS
+
+
+```{r}
+distancias <- c(10, 25, 50, 100, 250, 500)
+```
+
+
+```{r}
+buffers <- no2 |> 
+  # 1. Pasamos a un sistema métrico local (ETRS89 / UTM 30N) para que "dist" sean metros reales
+  st_transform(crs = 25830) |> 
+  
+  # 2. Multiplicamos cada punto por las distancias del vector
+  crossing(distancia = distancias) |> # 3. Volvemos a decirle a R: "Oye, la columna 'geom' vuelve a ser la geometría oficial"
+  st_as_sf(sf_column_name = "geom", crs = 25830) |> 
+  
+  # 4. Calculamos el buffer usando la columna correcta y su distancia asignada
+  mutate(geom = st_buffer(geom, dist = distancia)) |> 
+  
+  # 5. Pasamos el resultado final a coordenadas geográficas (WGS84) para Leaflet / Mapview
+  st_transform(crs = 4326)
+```
+
+
+```{r}
+buffers |> 
+  ggplot() +
+  geom_sf(data=aoi)+
+  geom_sf(aes(fill = NO2))+
+  facet_wrap(~distancia)
+```
+
+
+```{r}
+# Unir las geometrías de los buffers agrupadas por distancia y clase de NO2
+buffers_union <- buffers |> 
+  # Asegurar que todas las geometrías de los buffers sean válidas antes de unir
+  mutate(geometry = st_make_valid(geom)) |> 
+  
+  # Agrupamos por los dos criterios simultáneamente
+  group_by(distancia, Clase) |> 
+  
+  # Unimos los polígonos que compartan misma distancia y clase
+  summarise(geometry = st_union(geometry), .groups = "drop")
+
+
+mapview(buffers_union,
+        zcol = "Clase", 
+        legend = TRUE)
+```
+
+
+## Visualizaciones
+
+```{r }
+# 1. Definimos tu paleta de colores manual tal como la usas en Leaflet
+colores_calidad <- c(
+  "Bueno" = "forestgreen",
+  "Regular" = "yellow",
+  "Inaceptable" = "red"
+)
+```
+
+
+```{r 203_PLOT_FACET}
+# 1. Aseguramos que la distancia se pinte con la etiqueta "m" en el facet_wrap
+buffers_grafico <- buffers_union |> 
+  mutate(distancia_label = paste(distancia, "metros")) |> 
+  # Ordenamos el factor para que los mapas sigan el orden lógico de tamaño
+  mutate(distancia_label = reorder(distancia_label, distancia))
+
+ggplot() +
+  # Dibujamos el municipio de fondo en gris claro
+  geom_sf(data = st_transform(aoi, crs = 4326),
+          fill = "grey95",
+          color = "grey70",
+          size = 0.3) +
+  
+  # Dibujamos los buffers de las clases de NO2
+  geom_sf(data = buffers_grafico,
+          aes(fill = Clase),
+          color = "white",
+          lwd = 0.1,
+          alpha = 0.7) +
+  
+  # Paleta de colores para la Clase 
+  scale_fill_manual(values = colores_calidad, name = "Calidad del Aire (NO₂)")+
+  
+  # Dividimos en cuadrículas por cada distancia
+  facet_wrap(~distancia_label, ncol = 3) +
+  
+  # Estética limpia
+  labs(
+    title = paste("Áreas de influencia (Buffers) -", params$aoi),
+    subtitle = paste("Análisis por distancias concéntricas para el año", params$year),
+    x = NULL, y = NULL
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(face = "bold", size = 10), # Destacar los títulos de cada mapa
+    panel.grid = element_blank() # Limpiar rejillas de coordenadas para que destaque el mapa
+  )
+```
+
+
+
+
+
+
+
+
+
+
+## Guardar las capas
+
+```{r}
+# 1. Definimos las rutas absolutas para los dos GeoPackages
+ruta_gpkg_geo <- file.path(path_process, "buffers_geo.gpkg")
+ruta_gpkg_utm <- file.path(path_process, "buffers_utm.gpkg")
+
+```
+
+```{r}
+# Filtramos y nos quedamos con la versión UTM (métrica, EPSG:25830)
+buffers_utm_list <- buffers_union |> 
+  # Transformamos a UTM por seguridad para asegurar que la geometría sea métrica
+  st_transform(crs = 25830) |> 
+  # Dividimos el dataframe en una lista de sub-dataframes según la columna 'distancia'
+  split(buffers_union$distancia)
+```
+
+
+### Guardar GPKG
+
+```{r 203_save_utm}
+# Guardamos cada distancia como una capa independiente en buffers_utm.gpkg
+purrr::iwalk(buffers_utm_list, \(sub_df, dist_nombre) {
+  st_write(
+    sub_df,
+    dsn = ruta_gpkg_utm,
+    layer = paste0("buffer_utm_", dist_nombre, "m_unido"), 
+    delete_layer = TRUE,                            # Sobreescribe la capa si ya existía de un render anterior
+    quiet = TRUE                                    # Mantiene la consola de Quarto limpia
+  )
+})
+```
+
+### Guardar Geográficas
+
+```{r}
+# --- OPERACIÓN 2: GUARDAR BUFFER GEO ---
+# Filtramos y nos quedamos con la versión Geográfica (grados, EPSG:4326)
+buffers_geo_list <- buffers_union |> 
+  st_transform(crs = 4326) |> 
+  split(buffers_union$distancia)
+```
+
+
+```{r 203_save_geo}
+
+# Guardamos cada distancia como una capa independiente en buffers_geo.gpkg
+purrr::iwalk(buffers_geo_list, \(sub_df, dist_nombre) {
+  st_write(
+    sub_df,
+    dsn = ruta_gpkg_geo,
+    layer = paste0("buffer_geo_", dist_nombre, "buffers_union"), # Nombre de la capa: e.g., buffer_geo_100m
+    delete_layer = TRUE,
+    quiet = TRUE
+  )
+})
+```
+
+
+
+### Guardar parquet
+
+Creamos el folder geoparquet
+
+```{r}
+path_parquet <- here(paste0(path_process, "geoparquet/buffer/"))
+```
+
+
+```{r 203_dir_parquet_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_parquet,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+
+
+```{r}
+# --- 0. LIMPIEZA AUTOMÁTICA DE PARQUETS ANTIGUOS ---
+# Buscamos todos los archivos en "path_process" que contengan la palabra "isocrona" y terminen en .parquet
+archivos_antiguos <- list.files(
+  path = path_parquet, 
+  pattern = "buffer.*\\.parquet$",
+  full.names = TRUE
+)
+
+# Si encuentra archivos, los borra del disco de un plumazo
+#if (length(archivos_antiguos_buff) > 0) {
+#  file.remove(archivos_antiguos_buff)
+#}
+
+```
+
+Preparación de las listas
+
+```{r}
+# --- PREPARACIÓN DE LAS LISTAS ---
+# Versión Geográfica (4326) dividida por distancia
+buffers_geo_list <- buffers_union |> 
+  sf::st_transform(crs = 4326) |> 
+  split(buffers_union$distancia)
+
+# Versión UTM (25830) dividida por distancia
+buffers_utm_list <- buffers_union |> 
+  sf::st_transform(crs = 25830) |> 
+  split(buffers_union$distancia)
+```
+
+GUARDAR BUFFERS GEOGRÁFICOS (4326)
+
+
+```{r}
+# --- 1. GUARDAR BUFFERS GEOGRÁFICOS (4326) ---
+# Guardará archivos tipo: buffers_geo_100m.parquet
+purrr::iwalk(buffers_geo_list, \(objeto_sf, dist_nombre) {
+  ruta_final <- file.path(path_parquet, paste0("buffers_geo_", dist_nombre, "m.parquet"))
+  
+  objeto_sf |> 
+    sfarrow::st_write_parquet(ruta_final)
+})
+```
+
+
+GUARDAR BUFFERS UTM (25830)
+
+```{r}
+# --- 2. GUARDAR BUFFERS UTM (25830) ---
+# Guardará archivos tipo: buffers_utm_100m.parquet
+purrr::iwalk(buffers_utm_list, \(objeto_sf, dist_nombre) {
+  ruta_final <- file.path(path_parquet, paste0("buffers_utm_", dist_nombre, "m.parquet"))
+  
+  objeto_sf |> 
+    sfarrow::st_write_parquet(ruta_final)
+})
+```
+
+
+## Leaflet
+

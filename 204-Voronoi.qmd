@@ -24,13 +24,8 @@ library(tidyverse)
 library(sf)
 library(sfarrow) ## para guardar como geoparquet
 
-library(openrouteservice)
-
 library(mapview)
 library(here)
-
-
-
 
 library(leaflet)
 library(leaflet.extras)

@@ -1,0 +1,562 @@
+---
+title: "Análisis de Accesibilidad: Zonas de influencia"
+author: "Gisarte"
+date: "`r Sys.Date()`"
+format: html
+params:
+  aoi: "Erandio"
+  year: 2026
+  variable: "no2"
+---
+
+## librerias
+
+
+
+```{r 210-setup}
+
+#| include: false
+#| message: false
+#| warning: false
+#| 
+library(readxl)
+library(tidyverse)
+library(sf)
+library(sfarrow) ## para guardar como geoparquet
+
+library(mapview)
+library(here)
+
+
+
+
+library(leaflet)
+library(leaflet.extras)
+library(htmlwidgets)
+library(htmltools)
+
+```
+
+
+
+## Fijar rutas
+
+
+
+```{r 210_path_process}
+path_process <- here(paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "//"))
+path_process
+```
+
+
+```{r 210_data_path}
+ruta_aoi      <- file.path(path_process, "medidas_NO2.gpkg")
+ruta_buffers  <- file.path(path_process, "buffers_geo.gpkg")
+ruta_voronoi  <- file.path(path_process, "voronoi.gpkg")
+ruta_isocronas  <- file.path(path_process, "isocronas.gpkg")
+
+```
+
+
+
+
+
+## Cargar capas
+
+La zona de interés
+
+
+```{r 204_cargar_aoi_gpkg}
+# A. Área de Interés (Límite del municipio) y Puntos de NO2 originales
+aoi         <- sf::st_read(ruta_aoi, 
+                           layer = "aoi",
+                           quiet = TRUE)
+
+
+pdi  <- sf::st_read(ruta_aoi,
+                           layer = "NO2_exterior_4326",
+                           quiet = TRUE) # Ajusta el nombre si varía
+
+#
+
+# mapview(aoi)
+```
+
+```{r 210_voronoi}
+# B. Polígonos de Voronoi
+voronoi <- sf::st_read(ruta_voronoi,
+                       layer = "voronoi_geo",
+                       quiet = TRUE)
+
+```
+
+```{r 210_Buffer}
+# C. Buffers concéntricos mapeados con sus nombres reales del GPKG
+B10  <- sf::st_read(ruta_buffers, layer = "buffer_geo_10buffers_union", quiet = TRUE)
+B25  <- sf::st_read(ruta_buffers, layer = "buffer_geo_25buffers_union", quiet = TRUE)
+B50  <- sf::st_read(ruta_buffers, layer = "buffer_geo_50buffers_union", quiet = TRUE)
+B100 <- sf::st_read(ruta_buffers, layer = "buffer_geo_100buffers_union", quiet = TRUE)
+B250 <- sf::st_read(ruta_buffers, layer = "buffer_geo_250buffers_union", quiet = TRUE)
+B500 <- sf::st_read(ruta_buffers, layer = "buffer_geo_500buffers_union", quiet = TRUE)
+```
+
+
+
+```{r 210_isocronas}
+# D. Isocronas 
+
+Iso_bueno  <- sf::st_read(ruta_isocronas,
+                          layer = "isocronas_geo_Bueno",
+                          quiet = TRUE)
+
+
+Iso_Regular  <- sf::st_read(ruta_isocronas,
+                          layer = "isocronas_geo_Regular",
+                          quiet = TRUE)
+
+# Iso_Malo  <- sf::st_read(ruta_isocronas, layer = "isocronas_geo_Malo", quiet = TRUE)
+
+```
+
+
+
+
+```{r}
+# Aseguramos la creación de punto_rebelde usando tu objeto base filtrado
+punto_rebelde <- st_transform(pdi, crs = 4326) |> 
+  filter(Escuela == "Las tres cruces")
+```
+
+## Paletas de colores
+
+
+```{r paletas_leaflet}
+# 1. Paleta para las Isocronas (usando los objetos cargados Iso_bueno e Iso_Regular)
+# Combinamos el dominio de ambos para que la paleta cubra las dos clases
+pal_isocronas <- colorFactor(
+  palette = c(#"Inaceptable" = "red",
+                        "Bueno" = "forestgreen",
+                        "Regular" = "yellow"
+  ),
+  domain = c(Iso_bueno$Clase, Iso_Regular$Clase)
+)
+
+# 2. Paleta para tus polígonos de Voronoi (usando el objeto 'Voronoi' que cargaste)
+pal_voronoi <- colorFactor(
+  palette = c(
+    "Bueno"   = "#a9dfbf", # Verde pastel
+    "Regular" = "#f9e79f"  # Amarillo muy claro / pastel 💛
+  ),
+  domain = voronoi$Clase
+)
+
+# 3. Paleta para tus puntos de interés de NO2 (usando tu objeto 'pdi')
+pal_no2 <- colorFactor(
+  palette = c("lightgreen", "orange"),
+  domain = pdi$Clase
+)
+
+# 4. NUEVA: Paleta para los Buffers (B10, B25, B50, etc.)
+# Como todos los buffers tienen la misma estructura, nos basta con leer el dominio de uno de ellos (ej: B100)
+pal_buffers <- colorFactor(
+ palette = c(
+    "Bueno"   = "#2ecc71", # Verde estándar
+    "Regular" = "#f4d03f"  # Amarillo intermedio / puro 💛
+  ),
+  domain = B100$Clase
+)
+
+```
+
+## Leaflet
+
+### Leaflet mapa base
+
+```{r m1_aoi_base}
+# ==============================================================================
+# PASO 1: CONSTRUCCIÓN DEL MAPA BASE CON LA AOI (m1)
+# ==============================================================================
+
+m1 <- leaflet() |>
+  
+  # 1. Configuración de la vista inicial centrándola en tus coordenadas
+  setView(lng = -2.97859871, lat = 43.31310218, zoom = 14) |> 
+  
+  # 2. Mapas base (Capas de fondo alternativas)
+  addTiles(group = "OSM") |> 
+  addProviderTiles(providers$CartoDB.Positron, group = "CartoDB") |> # (Usamos Positron por consistencia gris, ajusta si prefieres el clásico)
+  addProviderTiles(providers$Esri.WorldImagery, group = "WorldImagery") |> 
+
+  # 3. Capa Base de Polígonos: Límite del Municipio (AOI)
+  # Como ya viene en 4326, le pasamos el objeto 'aoi' directo del tirón
+  addPolygons(
+    data = st_transform(aoi, crs = 4326),
+    color = "darkblue",
+    weight = 2,
+    opacity = 0.8,
+    fillColor = "darkblue",
+    fillOpacity = 0.05,            # Un relleno muy transparente para ver las calles del fondo
+    group = "Límite Municipal (AOI)" # Usamos un texto fijo limpio para el grupo
+  ) |> 
+
+  # 4. Panel de Control de Capas (Iniciado solo con las capas base y la AOI)
+  addLayersControl(
+    position = "topleft",
+    baseGroups = c("CartoDB", "OSM", "WorldImagery"),
+    overlayGroups = c("Límite Municipal (AOI)"),
+    options = layersControlOptions(collapsed = TRUE, autoZIndex = TRUE)
+  )
+
+# Mostramos el mapa base en tu documento QMD
+m1
+```
+
+### Leaflet Voronoi
+
+
+```{r m2_voronoi}
+# ==============================================================================
+# PASO 2: AÑADIR LA CAPA DE VORONOI (m2)
+# ==============================================================================
+
+m2 <- m1 |> 
+  
+  # Añadimos los polígonos de Voronoi construyendo sobre m1
+  addPolygons(
+    data = st_transform(voronoi, crs = 4326), # Aseguramos proyección geográfica
+    color = "#bdc3c7",, #~pal_voronoi(Clase),
+    weight = 1.5,
+    fillColor = ~pal_voronoi(Clase),
+    fillOpacity = 0.4,
+    group = "Voronoi",
+    label = ~paste("Voronoi:", Clase)
+  ) |> 
+  
+  # Actualizamos el panel de control de capas para incluir "Voronoi"
+  addLayersControl(
+    position = "topleft",
+    baseGroups = c("CartoDB", "OSM", "WorldImagery"),
+    overlayGroups = c("Límite Municipal (AOI)", "Voronoi"), # Añadida la nueva capa aquí
+    options = layersControlOptions(collapsed = TRUE, autoZIndex = TRUE)
+  )
+
+# Mostramos el mapa m2 con la AOI y los Voronoi juntos
+m2
+```
+
+
+
+```{r m3_buffers}
+# Creamos un vector con los nombres de los grupos de los buffers para el panel de control
+grupos_buffers <- c("Buffer 10m", "Buffer 25m", "Buffer 50m", "Buffer 100m", "Buffer 250m", "Buffer 500m")
+
+m3 <- m2 |> 
+  
+  # 1. Inyectamos cada objeto buffer individual (ya transformados a 4326 si fuera necesario)
+  addPolygons(data = st_transform(B10, crs = 4326),
+              color = "#bdc3c7", weight = 1, fillColor = ~pal_buffers(Clase),
+              fillOpacity = 0.3, group = "Buffer 10m", label = ~paste("Buffer 10m:", Clase)) |> 
+  
+  addPolygons(data = st_transform(B25, crs = 4326),
+              color = "#bdc3c7", weight = 1, fillColor = ~pal_buffers(Clase),
+              fillOpacity = 0.3, group = "Buffer 25m", label = ~paste("Buffer 25m:", Clase)) |> 
+  
+  addPolygons(data = st_transform(B50, crs = 4326),
+              color = "#bdc3c7", weight = 1, fillColor = ~pal_buffers(Clase),
+              fillOpacity = 0.3, group = "Buffer 50m", label = ~paste("Buffer 50m:", Clase)) |> 
+  
+  addPolygons(data = st_transform(B100, crs = 4326),
+              color = "#bdc3c7", weight = 1, fillColor = ~pal_buffers(Clase),
+              fillOpacity = 0.3, group = "Buffer 100m", label = ~paste("Buffer 100m:", Clase)) |> 
+  
+  addPolygons(data = st_transform(B250, crs = 4326),
+              color = "#bdc3c7", weight = 1, fillColor = ~pal_buffers(Clase),
+              fillOpacity = 0.3, group = "Buffer 250m", label = ~paste("Buffer 250m:", Clase)) |> 
+  
+  addPolygons(data = st_transform(B500, crs = 4326),
+              color = "#bdc3c7", weight = 1, fillColor = ~pal_buffers(Clase),
+              fillOpacity = 0.2, group = "Buffer 500m", label = ~paste("Buffer 500m:", Clase)) |> 
+
+  # 2. Actualizamos el panel de control incluyendo la AOI, Voronoi y todos los Buffers
+  addLayersControl(
+    position = "topleft",
+    baseGroups = c("CartoDB", "OSM", "WorldImagery"),
+    overlayGroups = c("Límite Municipal (AOI)", "Voronoi", grupos_buffers),
+    options = layersControlOptions(collapsed = TRUE, autoZIndex = TRUE)
+  ) |> 
+  
+  # 3. Mantenemos tu fantástica idea: ocultar los buffers por defecto para no saturar el mapa al abrirlo
+  hideGroup(grupos_buffers)
+
+# Mostramos el mapa m3 en el documento
+m3
+```
+
+### Leaflet Isocronas
+
+```{r m4_isocronas}
+# ==============================================================================
+# PASO 4: AÑADIR LAS CAPAS DE ISOCRONAS REALES (m4)
+# ==============================================================================
+
+m4 <- m3 |> 
+  
+  # 1. Añadimos la isocrona de zonas con calidad de aire "Bueno"
+  addPolygons(
+    data = st_transform(Iso_bueno, crs = 4326),
+    color = "#7f8c8d",                  # Gris intermedio para el contorno de la red vial
+    weight = 1.5,
+    opacity = 0.8,
+    fillColor = ~pal_isocronas(Clase),   # Aplica el verde oscuro de tu paleta
+    fillOpacity = 0.6,
+    group = "Isocronas",                # Agrupamos ambas en el mismo interruptor
+    label = ~paste("Isocrona:", Clase)
+  ) |> 
+  
+  # 2. Añadimos la isocrona de zonas con calidad de aire "Regular"
+  addPolygons(
+    data = st_transform(Iso_Regular, crs = 4326),
+    color = "#7f8c8d",
+    weight = 1.5,
+    opacity = 0.8,
+    fillColor = ~pal_isocronas(Clase),   # Aplica el naranja intenso de tu paleta
+    fillOpacity = 0.6,
+    group = "Isocronas",                # Mismo grupo para activarlas/desactivarlas juntas
+    label = ~paste("Isocrona:", Clase)
+  ) |> 
+  
+  # 3. Actualizamos el panel de control de capas incluyendo el nuevo grupo "Isocronas"
+  addLayersControl(
+    position = "topleft",
+    baseGroups = c("CartoDB", "OSM", "WorldImagery"),
+    overlayGroups = c("Límite Municipal (AOI)", "Voronoi", "Isocronas", grupos_buffers),
+    options = layersControlOptions(collapsed = TRUE, autoZIndex = TRUE)
+  )
+
+# Mostramos el mapa m4 en el documento
+m4
+```
+
+
+```{r m4_isocronas_separadas}
+# ==============================================================================
+# PASO 4: AÑADIR LAS CAPAS DE ISOCRONAS SEPARADAS POR CLASE (m4)
+# ==============================================================================
+
+m4 <- m3 |> 
+  
+  # 1. Capa independiente para Isocronas de Clase "Bueno"
+  addPolygons(
+    data = st_transform(Iso_bueno, crs = 4326),
+    color = "#7f8c8d",                  
+    weight = 1.5,
+    opacity = 0.8,
+    fillColor = ~pal_isocronas(Clase),   # Verde oscuro
+    fillOpacity = 0.6,
+    group = "Isocronas - Bueno",         # Nombre de grupo único 🟢
+    label = ~paste("Isocrona Bueno:", Clase)
+  ) |> 
+  
+  # 2. Capa independiente para Isocronas de Clase "Regular"
+  addPolygons(
+    data = st_transform(Iso_Regular, crs = 4326),
+    color = "#7f8c8d",
+    weight = 1.5,
+    opacity = 0.8,
+    fillColor = ~pal_isocronas(Clase),   # Naranja intenso
+    fillOpacity = 0.6,
+    group = "Isocronas - Regular",       # Nombre de grupo único 🟠
+    label = ~paste("Isocrona Regular:", Clase)
+  ) |> 
+  
+  # 3. Actualizamos el panel de control incluyendo los dos nuevos grupos por separado
+  addLayersControl(
+    position = "topleft",
+    baseGroups = c("CartoDB", "OSM", "WorldImagery"),
+    overlayGroups = c(
+      "Límite Municipal (AOI)", 
+      "Voronoi", 
+      "Isocronas - Bueno",       # Interruptor 1
+      "Isocronas - Regular",     # Interruptor 2
+      grupos_buffers
+    ),
+    options = layersControlOptions(collapsed = TRUE, autoZIndex = TRUE)
+  )
+
+# Mostramos el mapa m4 modificado
+m4
+```
+### Leaflet Mediciones
+
+```{r m5_mediciones}
+#| warning: false
+#| message: false
+# ==============================================================================
+# PASO 5: AÑADIR PUNTOS (PDI), PUNTO REBELDE Y LEYENDAS (m5 - MAPA FINAL)
+# ==============================================================================
+
+# 1. Creamos un vector auxiliar con los niveles de clase para la leyenda de los puntos
+niveles_clase <- c("Bueno", "Regular")
+
+m5 <- m4 |> 
+  
+  # ----------------------------------------------------------------------------
+  # A. CAPA: Puntos de medición (PDI) con sus Popups informativos
+  # ----------------------------------------------------------------------------
+  addCircleMarkers(
+    data = st_transform(pdi, crs = 4326), # Aseguramos proyección geográfica
+    radius = 6,                           # Un pelín más grande para que se vea bien
+    fillColor = ~pal_no2(Clase),          # Tus colores: lightgreen y orange
+    fillOpacity = 0.9,
+    color = "#333333",                    # Borde gris oscuro para el punto
+    weight = 1,
+    group = "Puntos NO₂ (Escuelas)",
+    label = ~paste("Escuela:", Escuela),   # Texto rápido al pasar el ratón
+    popup = ~paste(                       # Diseño HTML limpio para el clic
+      "<b>🏫 ", Escuela, "</b><br>",
+      "<hr style='margin: 5px 0;'>",
+      "<b>💨 NO₂:</b> ", round(NO2, 1), " µg/m³<br>",
+      "<b>📍 Ubicación:</b> ", position, "<br>",
+      "<b>⭐ Evaluación:</b> ", Clase
+    )
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # B. CAPA DE CONTROL: Marcador Especial "Las tres cruces" (punto_rebelde)
+  # ----------------------------------------------------------------------------
+  addAwesomeMarkers(
+    data = st_transform(punto_rebelde, crs = 4326),
+    icon = makeAwesomeIcon(icon = "info-sign", markerColor = "orange", iconColor = "white"),
+    group = "Punto de control (Red vial)",
+    popup = ~paste(
+      "<b>⚠️ Nota de Enrutamiento:</b><br>",
+      "<b>📍 Lugar:</b> ", Escuela, "<br>",
+      "El punto original se encuentra fuera de su isócrona debido a que el motor ",
+      "de cálculo (ORS) tuvo que desplazar (<i>snapping</i>) el origen virtual a la ",
+      "vía peatonal transitable más cercana en OpenStreetMap."
+    )
+  ) |> 
+
+  # ----------------------------------------------------------------------------
+  # C. LEYENDAS (Ubicadas a la derecha para no estorbar al panel de capas)
+  # ----------------------------------------------------------------------------
+  
+  # Leyenda 1: Puntos de NO2
+  addLegend(
+    position = "bottomright",
+    pal = pal_no2,
+    values = niveles_clase,
+    title = htmltools::HTML("NO<sub>2</sub> (Escuelas)"),
+    opacity = 1,
+    group = "Puntos NO₂ (Escuelas)"
+  ) |> 
+
+  # Leyenda 2: Isocronas (Muestra tu escala de verdes/naranjas intensos)
+  addLegend(
+    position = "topright",
+    pal = pal_isocronas,
+    values = niveles_clase,
+    title = "Isocronas (5 minutos a pie)",
+    group = "Isocronas - Bueno", # Vinculada para que se oculte si apagas la capa
+    opacity = 0.7
+  ) |> 
+  
+  # Leyenda 3: Voronoi (Muestra tu escala de colores pastel)
+  addLegend(
+    position = "topright",
+    pal = pal_voronoi,
+    values = niveles_clase,
+    title = "Celdas Voronoi",
+    group = "Voronoi",
+    opacity = 0.6
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # D. ACTUALIZACIÓN FINAL DEL PANEL DE CONTROL DE CAPAS
+  # ----------------------------------------------------------------------------
+  addLayersControl(
+    position = "topleft",
+    baseGroups = c("CartoDB", "OSM", "WorldImagery"),
+    overlayGroups = c(
+      "Límite Municipal (AOI)", 
+      "Puntos NO₂ (Escuelas)",
+      "Punto de control (Red vial)",
+      "Isocronas - Bueno", 
+      "Isocronas - Regular", 
+      "Voronoi", 
+      grupos_buffers
+    ),
+    options = layersControlOptions(collapsed = TRUE, autoZIndex = TRUE)
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # E. COMPLEMENTOS EXTRAS (Tus herramientas de utilidad)
+  # ----------------------------------------------------------------------------
+  addMiniMap(toggleDisplay = TRUE, position = "bottomleft") |> 
+  addMeasure(position = "topleft", primaryLengthUnit = "meters", primaryAreaUnit = "sqmeters") |> 
+  addResetMapButton()
+
+# Renderizamos el mapa definitivo en el documento QMD
+m5
+```
+
+
+
+## Guardar Leaflet
+
+```{r}
+path_map <- paste0("../../500_resultados/",
+                       params$year,
+                       "_", params$aoi,
+                       "/")
+```
+
+
+
+```{r}
+
+#Crear carpeta si no existe
+
+dir.create(
+  path_map,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+
+```{r}
+# map <- map_POP3
+### Salva el mapa en un html --------------
+
+
+htmlwidgets::saveWidget(
+  m5,
+  file = paste0(
+    path_map,
+    params$aoi,
+    "_",
+    params$year,
+    "_Calidad_Ambiental. Accesibilidad e Impacto.html"
+  )
+)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

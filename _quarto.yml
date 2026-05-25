@@ -24,6 +24,7 @@ book:
         - 202-Isocronas-3k.qmd
         - 203-Buffers.qmd
         - 204-Voronoi.qmd
+        - 210-Influenccia_Vizz.qmd
 #        - 20-RSI_Sentinel2.qmd
 #    - part: "FAUNA"
 #      chapters:

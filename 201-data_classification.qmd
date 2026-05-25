@@ -20,15 +20,10 @@ library(mapview)
 library(here)
 
 
-
-
 library(leaflet)
 library(leaflet.extras)
 library(htmlwidgets)
 library(htmltools)
-
-library(maptiles)
-library(tidyterra)
 ```
 
 ## Fijar rutas

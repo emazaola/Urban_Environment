@@ -18,28 +18,22 @@ params:
 #| include: false
 #| message: false
 #| warning: false
-#| 
-library(readxl)
+ 
 library(tidyverse)
 library(sf)
 library(sfarrow) ## para guardar como geoparquet
 
 library(openrouteservice)
 
+
 library(mapview)
 library(here)
-
-
 
 
 library(leaflet)
 library(leaflet.extras)
 library(htmlwidgets)
 library(htmltools)
-
-#library(maptiles)
-#library(tidyterra)
-
 
 ```
 
@@ -79,43 +73,33 @@ dir.create(
 
 ```
 
+```{r 202_ruta_gpkg}
+
+ruta_gpkg <- file.path(path_process, "medidas_NO2.gpkg")
+
+
+```
 
 ## Cargar datos
 
 La zona de interés
 
 ```{r 202_aoi}
-
-
-aoi <- read_sf(here(paste0(geodata_path, "MUNICIPIOS_5000_ETRS89/MUNICIPIOS_5000_ETRS89.shp"))) |> 
-
-  filter(NOMBRE_TOP== params$aoi)|> 
-  select(c("NOMBRE_TOP", "MUN_MUNI", "geometry"))|> 
-  select(c("NOMBRE_TOP", "geometry"))
-
-
+aoi <- st_read(ruta_gpkg, 
+               layer = "aoi", quiet = TRUE)
 # st_crs(aoi)
 
-aoi$NOMBRE_TOP <- params$aoi
-
-# mapview(aoi)
+mapview(aoi)
 ```
 
 Los datos de las mediciones de NO2.
 
 
 
-```{r 202_ruta_gpkg}
 
-ruta_gpkg <- file.path(path_process, "medidas_NO2.gpkg")
-
-# Cargamos Erandio (AOI) y la capa ya geográfica que preparaste
-
-# aoi <- st_read(ruta_gpkg, layer = "aoi", quiet = TRUE)
+```{r 202_read_no2}
 
 no2 <- st_read(ruta_gpkg, layer = "NO2_exterior_4326", quiet = TRUE)
-
-# mapview(no2)
 ```
 
 
