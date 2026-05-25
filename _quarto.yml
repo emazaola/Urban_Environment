@@ -11,8 +11,9 @@ book:
     - part: "Inicio"
       chapters:
         - 10-recursos.qmd
-#    - part: "DIVISIONES ADMINISTRATIVAS"
-#      chapters:
+    - part: "EL ÁREA DE ESTUDIO"
+      chapters:
+         - 101-Escuelas.qmd
 #        - 100-_Divisiones Euskadi.qmd
 #        - 101-proceso_01.qmd
 #        - 102-proceso_02.qmd

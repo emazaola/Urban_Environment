@@ -362,3 +362,8 @@ purrr::iwalk(buffers_utm_list, \(objeto_sf, dist_nombre) {
 
 ## Leaflet
 
+```{r}
+
+```
+
+
