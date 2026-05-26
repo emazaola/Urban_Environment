@@ -1,0 +1,678 @@
+---
+title: "POBLACIÓN. JRC"
+params:
+  aoi: "Erandio"
+  country: "Spain"
+  year: 2026
+  variable: "no2"
+---
+
+## librerias
+
+```{r }
+
+#| include: false
+#| message: false
+#| warning: false
+
+libs <- c(
+    "tidyverse",
+    "terra",
+    "giscoR",
+    "sf",
+    "elevatr",
+    "png",
+    "httr",
+#    "rayshader",
+    
+    "mapview",
+    "leaflet",
+    "leaflet.extras",
+    "leafem", 
+
+    "here"
+)
+
+installed_libraries <- libs %in% rownames(
+    installed.packages()
+)
+
+if(any(installed_libraries == F)){
+    install.packages(
+        libs[!installed_libraries],
+        dependencies = T
+    )
+}
+
+invisible(
+    lapply(
+        libs, library, character.only = T
+    )
+)
+
+
+```
+
+
+## Fijar rutas
+
+```{r 102_path_process}
+path_data <- paste0("../../10_data/geodata/",
+                       params$year,
+                       "_", params$aoi,
+                       "/")
+
+path_process <- paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/")
+
+```
+
+```{r 102_dir_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_data,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+
+dir.create(
+  path_process,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+
+
+
+
+## Cargar AOI
+Tenemos la AOI generada anteriormente
+
+```{r 102-aoi}
+  aoi <- read_sf(here(paste0(path_process,"aoi.gpkg"))) |> 
+  st_transform(4326)
+
+```
+
+También se puede obtener directamente usando OSM
+
+
+## ----------------------------------------------------------------------
+::: {.alert .alert-block .alert-info}
+
+## Obtener el polígono del municipio de `r params$aoi` desde OSM
+
+```{r place_fix}
+place = paste0(params$aoi,", ",params$country)
+```
+
+
+
+:::
+
+## ----------------------------------------------------------------------
+
+
+
+## DATOS de POBLACIÓN
+
+Se descarga una vez de GSL data y se guarda.
+El proceso de descarga es el siguiente
+
+
+::: {.alert .alert-block .alert-info}
+
+### GHSL Data
+
+[GHSL - Global Human Settlement Layer](https://human-settlement.emergency.copernicus.eu/download.php?ds=builtC)
+
+Hay que seleccionar la variable que se quiere, el año, el tipo de proyección y descargar (o copiar el enlace)
+
+Habrá que estraes los nombres de los archivos
+
+```{r}
+#| eval: false
+
+cambiar_extension <- function(url, nueva_extension = "tif") {
+  url |> 
+    str_extract("[^/]+$") |> 
+    str_remove("\\.(zip|ZIP)$") |> 
+    str_c(".", nueva_extension)
+}
+```
+
+
+
+
+https://human-settlement.emergency.copernicus.eu/download.php?ds=pop
+
+
+```{r}
+#| eval: false
+
+url_pop <- "https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_POP_GLOBE_R2023A/GHS_POP_E2025_GLOBE_R2023A_54009_100/V1-0/tiles/GHS_POP_E2025_GLOBE_R2023A_54009_100_V1_0_R4_C18.zip"
+url_pop
+
+```
+
+
+```{r}
+#| eval: false
+
+
+file_name <- basename(url_pop)
+ruta_zip <- paste0(path_data, file_name)
+
+download.file(
+    url = url_pop,
+    destfile = ruta_zip,
+    mode = "wb"
+)
+
+
+unzip(ruta_zip, exdir = path_data)
+
+
+```
+
+
+```{r}
+#| eval: false
+
+
+archivos_tif <- list.files(path = path_data,
+                           pattern = "\\.tif$",
+                           recursive = TRUE,
+                           full.names = TRUE)
+archivos_tif
+```
+
+
+
+:::
+
+
+### Población de la AOI
+
+```{r}
+path_POP <- file.path(here("../../10_data/geodata/GHS_POP_E2025_GLOBE_R2023A_54009_100_V1_0_R4_C18.tif"))
+```
+
+
+
+```{r 102-aoi_POP}
+aoi_POP <- terra::rast(path_POP)
+crs(aoi_POP)
+```
+
+
+### Recortar población de AOI
+
+```{r}
+aoi_pr <- terra::vect(aoi) |> 
+  terra::project(crs(aoi_POP))
+
+aoi_POP <- aoi_POP |>
+terra::crop(
+  aoi_pr,
+   # terra::vect(aoi),
+    snap = "in",
+    mask = T
+)
+
+crs_utm <- terra::crs(terra::vect(aoi))
+
+aoi_POP_utm <- terra::project(aoi_POP, crs_utm)
+
+plot(aoi_POP_utm)
+```
+
+Reproyectaos a SRC geográficas
+
+```{r}
+crs_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+
+# Reprojectar usando la definición completa
+aoi_POP <- terra::project(aoi_POP, crs_wgs84)
+
+```
+
+
+```{r}
+crs_3857 <- "+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext +no_defs"
+
+aoi_POP_leaflet <- terra::project(aoi_POP, crs_3857)
+```
+
+
+
+#### Cambiar a grid 
+
+```{r}
+# 1. Convertimos el raster directamente a polígonos (SF)
+# Esto crea un polígono por cada celda que NO sea NA
+aoi_polys <- terra::as.polygons(aoi_POP, aggregate = FALSE) |> 
+  st_as_sf()
+
+# 3. Proyectamos a WGS84 para Leaflet (usando tu cadena Proj4 que sí funciona)
+crs_wgs84 <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+aoi_polys <- st_transform(aoi_polys, crs_wgs84)
+
+
+# st_crs(aoi_polys)
+```
+
+
+```{r}
+names(aoi_polys) <- c("Population_2025", "geometry")
+```
+
+
+
+
+## GUARDAR
+
+### Guardar capas vectoriales
+
+```{r}
+# 1. Definimos las rutas absolutas para tus dos GeoPackages
+ruta_gpkg_pop <- file.path(path_process, "POP.gpkg")
+```
+
+
+```{r}
+# --- PREPARACIÓN DE GEOMETRÍAS ---
+# Versión UTM original (métrica)
+aoi_polys_utm <- aoi_polys |> 
+  sf::st_transform(crs = 25830)
+
+
+# Versión Geográfica (grados) para Leaflet
+aoi_polys_geo <- aoi_polys |> 
+  sf::st_transform(crs = 4326)
+```
+
+Guardar UTM
+```{r}
+# Guardamos la capa UTM en el mismo archivo físico
+sf::st_write(
+  aoi_polys_utm,
+  dsn = ruta_gpkg_pop,
+  layer = "Population_utm",      # Nombre de la segunda capa
+  delete_layer = TRUE,        # Sobrescribe solo esta capa si ya existía
+  quiet = TRUE
+)
+```
+
+
+
+Guardar Geográficas
+
+```{r}
+# Guardamos la capa GEO en el mismo archivo físico
+sf::st_write(
+  aoi_polys_geo,
+  dsn = ruta_gpkg_pop,
+  layer = "Population_geo",      # Nombre de la segunda capa
+  delete_layer = TRUE,        # Sobrescribe solo esta capa si ya existía
+  quiet = TRUE
+)
+```
+
+Guardar parquet
+
+```{r}
+path_parquet <- here(paste0(path_process, "geoparquet//"))
+```
+
+```{r}
+#Crear carpeta si no existe
+
+dir.create(
+  path_parquet,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+```
+
+```{r}
+# --- 0. LIMPIEZA AUTOMÁTICA DE PARQUETS ANTIGUOS ---
+# Buscamos todos los archivos en "path_process" que contengan la palabra "isocrona" y terminen en .parquet
+archivos_antiguos <- list.files(
+  path = path_parquet, 
+  pattern = "Population.*\\.parquet$",
+  full.names = TRUE
+)
+
+# Si encuentra archivos, los borra del disco de un plumazo
+#if (length(archivos_antiguos_buff) > 0) {
+#  file.remove(archivos_antiguos_buff)
+#}
+```
+
+
+```{r}
+# 
+suppressWarnings({
+  sfarrow::st_write_parquet(aoi_polys_geo,
+                            file.path(path_parquet, "Population_geo.parquet"))
+  
+  
+  
+  
+  sfarrow::st_write_parquet(aoi_polys_utm,
+                            file.path(path_parquet, "Population_utm.parquet"))
+})
+```
+
+
+
+
+### Guardar capas raster
+
+```{r 102_guardar_raster_cog}
+#| warning: false
+
+# ==============================================================================
+# FASE 1: GUARDAR CAPA RASTER PARA LEAFLET EN FORMATO COG (Cloud Optimized GeoTIFF)
+# ==============================================================================
+
+# 1. Definimos la ruta de salida para el raster de visualización web
+ruta_cog_pop <- file.path(path_process, "POP_geo.tif")
+
+# 2. Exportamos aplicando los parámetros nativos de optimización COG
+terra::writeRaster(
+  x = aoi_POP_leaflet,
+  filename = ruta_cog_pop,
+  overwrite = TRUE,
+  # ----------------------------------------------------------------------------
+  # CONFIGURACIÓN GDAL PARA COG:
+  # ----------------------------------------------------------------------------
+  gdal = c(
+    "DRIVER=COG",            # Fuerza a GDAL a maquetar el archivo como COG nativo
+    "COMPRESS=DEFLATE",      # Compresión sin pérdida ideal para mantener los datos de población
+    "LEVEL=9",               # Nivel máximo de compresión para que ocupe lo mínimo en web
+    "TILING=YES",            # Divide la imagen en azulejos internos (bloques)
+    "OVERVIEWS=AUTO"         # Genera automáticamente las pirámides de resolución para el zoom
+  )
+)
+
+```
+
+
+```{r 102_guardar_raster_utm}
+#| warning: false
+
+# ==============================================================================
+# FASE 2: GUARDAR CAPA RASTER ANALÍTICA EN FORMATO GEOTIFF ESTÁNDAR (UTM)
+# ==============================================================================
+
+# 1. Definimos la ruta de salida para el raster métrico
+ruta_utm_pop <- file.path(path_process, "POP_utm.tif")
+
+# 2. Exportamos el raster UTM garantizando la máxima precisión matemática
+terra::writeRaster(
+  x = aoi_POP_utm,                     # Tu objeto raster en UTM (EPSG:25830)
+  filename = ruta_utm_pop,
+  overwrite = TRUE,
+  # ----------------------------------------------------------------------------
+  # CONFIGURACIÓN GDAL PARA CONSERVACIÓN DE DATOS:
+  # ----------------------------------------------------------------------------
+  gdal = c(
+    "COMPRESS=DEFLATE",      # Compresión sin pérdida (mantiene los habitantes exactos)
+    "PREDICTOR=2"            # Optimiza la compresión para datos numéricos continuos
+  )
+)
+
+message("📊 Raster analítico guardado con éxito como GeoTIFF Estándar (UTM)")
+```
+
+
+###---------------------------------
+
+
+
+###---------------------------------
+
+### visualizar leaftlet
+
+```{r}
+aoi_POP
+names(aoi_POP) <- c("Population_2025")
+```
+
+
+```{r}
+# Crear paleta de colores primero
+pal_poblacion <- colorNumeric(
+  palette = "magma",
+  domain = values(aoi_POP),  # Valores del raster
+  na.color = "transparent"
+)
+```
+
+limpliar valores 0
+
+```{r}
+# Limpiar el raster: convertir 0 a NA
+aoi_POP_clean <- aoi_POP
+aoi_POP[aoi_POP == 0] <- NA
+aoi_POP
+
+plot(aoi_POP)
+```
+
+
+```{r}
+
+
+
+map_POP <- leaflet() |> 
+  addProviderTiles(providers$CartoDB.Positron)  |>   
+
+  
+##------------------------------------  
+  addRasterImage(
+    aoi_POP,
+   #  aoi_POP_raster,
+    colors = pal_poblacion,  # Usar la paleta creada
+    layerId = "Population_2025",
+    opacity = 0.3,
+    project = TRUE  # Deja que leaflet reproyecte automáticamente
+  ) |> 
+  
+  
+##------------------------------------    
+  
+  
+##------------------------------------  
+  addLegend(
+    position = "bottomright",
+    pal = pal_poblacion,
+    values = values(aoi_POP),
+    title = "Población (hab/100 m²)",
+    opacity = 0.7,
+    labFormat = labelFormat(suffix = " hab")
+  )
+
+map_POP
+```
+
+```{r}
+summary(aoi_polys$Population_2025)
+```
+
+
+```{r}
+# Definimos cortes manuales para "estirar" los colores en los valores bajos
+cortes <- c(0,5,  10, 25, 50, 100, 200, 300)
+
+# Usamos 7 colores de inferno (porque tienes 7 intervalos entre los 8 cortes)
+colores_personalizados <- c("#F0F0F0", viridisLite::inferno(7))
+
+pal_poblacion <- colorBin(
+  palette = "inferno",
+  domain = aoi_polys$Population_2025,
+  bins = cortes,
+  na.color = "transparent"
+)
+```
+
+
+```{r}
+map_POP3 <- leaflet() |> 
+  
+  setView(lng = -2.97859871 , lat = 43.31310218, zoom = 14) |> 
+  
+  # mapas base
+  
+  addTiles(group = "OSM") |> 
+  addProviderTiles(providers$CartoDB, 
+                   group = "CartoDB")  |>
+  addProviderTiles(providers$Esri.WorldImagery,
+                   group = "WorldImagery") |>  
+  #---------------------------------
+  
+    # AOI polygon (boundary only)
+  addPolygons(
+    data = st_transform( aoi, crs = 4326),
+   # fill = "wheat",
+    color = "darkblue",
+    weight = 2,       
+    opacity = 0.3,
+    group = params$aoi
+  ) |> 
+
+  #---------------------------------
+  
+  addPolygons(
+    data = aoi_polys,
+    fillColor = ~pal_poblacion(Population_2025),
+    weight = 0.5,         # Borde fino entre celdas
+    opacity = 1,
+    color = "white",      # Color del borde
+    # TRUCO: Si la población es < 5, opacidad 0.1, si no, 0.7
+    fillOpacity = ~ifelse(Population_2025 < 5, 0.1, 0.7),
+    # ESTO ES LO QUE BUSCABAS:
+    popup = ~paste0("<strong>Población: </strong>", round(Population_2025, 2), " hab"),
+    highlightOptions = highlightOptions(
+      weight = 1,
+      color = "#666",
+      fillOpacity = 0.9,
+      bringToFront = TRUE
+    ),
+    group = "Población" # Añadido para poder controlarlo luego
+  ) |> 
+  
+  addLegend(
+    data = aoi_polys,
+    pal = pal_poblacion, 
+    values = ~Population_2025, 
+    title = "Hab/100m²",
+    position = "bottomright"
+  )|>
+  
+  # Opcional: Control de capas para que puedas elegir el mapa base
+  addLayersControl(
+    position = "topleft",
+    baseGroups = c("CartoDB", "OSM", "WorldImagery"),
+    overlayGroups = c(params$aoi,
+                      "Población"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+
+map_POP3
+```
+
+
+
+```{r}
+path_map <- paste0("../../resultados/",
+                       params$year,
+                       "_", params$aoi,
+                       "/")
+```
+
+```{r}
+
+#Crear carpeta si no existe
+
+dir.create(
+  path_map,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+```{r}
+# map <- map_POP3
+### Salva el mapa en un html --------------
+
+
+htmlwidgets::saveWidget(
+  map_POP3,
+  file = paste0(
+    path_map,
+    params$aoi,
+    "_",
+    params$year,
+    "_POPulation.html"
+  )
+)
+
+```
+
+
+```{r}
+map_POP2 <- leaflet(aoi_polys) |> 
+  
+  setView(lng = -2.97859871 , lat = 43.31310218, zoom = 14) |> 
+  
+  # mapas base
+  
+  addTiles(group = "OSM") |> 
+  addProviderTiles(providers$CartoDB, 
+                   group = "CartoDB")  |>
+  addProviderTiles(providers$Esri.WorldImagery,
+                   group = "WorldImagery") |> 
+
+  #---------------------------------
+  
+  addPolygons(
+    fillColor = ~pal_poblacion(Population_2025),
+    weight = 0.5,         # Borde fino entre celdas
+    opacity = 1,
+    color = "white",      # Color del borde
+    # TRUCO: Si la población es < 5, opacidad 0.1, si no, 0.7
+    fillOpacity = ~ifelse(Population_2025 < 5, 0.1, 0.7),
+    # ESTO ES LO QUE BUSCABAS:
+    popup = ~paste0("<strong>Población: </strong>", round(Population_2025, 2), " hab"),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      color = "#666",
+      fillOpacity = 0.9,
+      bringToFront = TRUE
+    )
+  ) |> 
+  
+  addLegend(
+    pal = pal_poblacion, 
+    values = ~Population_2025, 
+    title = "Hab/100m²",
+    position = "bottomright"
+  )
+
+map_POP2
+```
+
+
+```{r}
+
+```
+
+

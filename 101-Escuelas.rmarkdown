@@ -6,7 +6,15 @@ params:
   variable: "no2"
 ---
 
+
+
+
+
 ## librerias
+
+
+
+
 
 ```{r echo=FALSE, warning=FALSE}
 
@@ -30,17 +38,21 @@ library(here)
 ```
 
 
+
+
+
+
 ## Fijar rutas
+
+
+
+
 
 ```{r 101_data_path}
 geodata_path <- here("../../10_data/geodata/geoeuskadi//")
 # data_path <- here("../../10_data/numeric-data//")
 
 ```
-
-
-
-
 
 ```{r 101_path_process}
 path_process <- paste0("../../20_process/geoprocess/",
@@ -52,7 +64,15 @@ path_process
 ```
 
 
+
+
+
+
 Crear directorio
+
+
+
+
 
 ```{r 101__dir_create}
 #Crear carpeta si no existe
@@ -65,9 +85,17 @@ dir.create(
 ```
 
 
+
+
+
+
 ## Cargar datos
 
 La zona de interés
+
+
+
+
 
 ```{r 101_aoi}
 
@@ -92,8 +120,16 @@ aoi$NOMBRE_TOP <- params$aoi
 
 
 
+
+
+
+
 ###------------------------------------------
 Creamos un buffer en metros y luego lo pasamos a coordenadas geométricas
+
+
+
+
 
 
 ```{r}
@@ -103,7 +139,6 @@ aoi_B <- aoi |>
   
 ```
 
-
 ```{r}
 # Crear bbox con un pequeño buffer
 box <- st_bbox(aoi_B)  # Ajusta la distancia según tu CRS
@@ -112,6 +147,10 @@ box <- st_bbox(aoi_B)  # Ajusta la distancia según tu CRS
 ```{r}
 mapview(box)
 ```
+
+
+
+
 
 
 ###---------
@@ -138,7 +177,11 @@ Guardalo en: **"../../10_data/geodata/"**
 :::
 
 ###-----------------
-```{r 101-osm_query}
+
+
+
+
+```{r}
 # 1. Construir consulta OSM para centros educativos
 query <- opq(st_bbox(box))  |>   # Usar bbox del área de interés
   add_osm_feature(key = "amenity", 
@@ -147,19 +190,13 @@ query <- opq(st_bbox(box))  |>   # Usar bbox del área de interés
 
 ```
 
-
-
 ```{r}
 educ_polygons <- query$osm_polygons
 ```
 
-
 ```{r}
 mapview(educ_polygons, zcol="amenity")
 ```
-
-
-
 
 ```{r}
 # 3. Filtrar elementos dentro del aoi (mismo CRS)
@@ -168,7 +205,6 @@ escuelas <- educ_polygons  |>
   st_intersection(aoi)  # Recortar al área de interés
 
 ```
-
 
 ```{r}
 # mapview w list of objects
@@ -180,12 +216,20 @@ mapview(list(aoi, educ_polygons),
 
 
 
+
+
+
+
 ## Guardar las capas
 
 ### Guardar GPKG
 
 Guardar UTM
   
+
+
+
+
 ```{r 101_rutasgpkg}
 # 1. Definimos las rutas absolutas para tus dos GeoPackages
 ruta_gpkg_aoi <-  file.path(path_process, "aoi.gpkg")
@@ -194,8 +238,6 @@ ruta_gpkg_aoi <-  file.path(path_process, "aoi.gpkg")
 ruta_gpkg_escuelas <- file.path(path_process, "escuelas.gpkg")
 
 ```
-
-
 
 ```{r 101_geometrias}
 # --- PREPARACIÓN DE GEOMETRÍAS ---
@@ -217,7 +259,6 @@ escuelas_geo <- escuelas |>
 aoi_geo <- aoi |> 
   sf::st_transform(crs = 4326)
 ```
-
 
 ```{r 101_saveGpkg_utm}
 sf::st_write(
@@ -241,7 +282,15 @@ sf::st_write(
 
 
 
+
+
+
+
   Guardar Geográficas
+
+
+
+
 
 
 ```{r 204_saveGpkg_geo}
@@ -271,14 +320,21 @@ sf::st_write(
 
 
 
+
+
+
+
 ### Guardar parquet
 
 Creamos el folder geoparquet
 
+
+
+
+
 ```{r}
 path_parquet <- here(paste0(path_process, "geoparquet//"))
 ```
-
 
 ```{r 204_dir_parquet_create}
 #Crear carpeta si no existe
@@ -289,9 +345,6 @@ dir.create(
   showWarnings = FALSE)
 
 ```
-
-
-
 
 ```{r 204_remove_parqueto}
 #| warning: false
@@ -318,9 +371,6 @@ archivos_antiguos <- list.files(
 )
 
 ```
-
-
-
 
 ```{r 101_guardar_buffers_parquet}
 #| warning: false
@@ -362,4 +412,9 @@ suppressWarnings({
 ```
 
 
+
+
+
+
 #
+

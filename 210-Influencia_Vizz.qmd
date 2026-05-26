@@ -59,6 +59,10 @@ ruta_buffers  <- file.path(path_process, "buffers_geo.gpkg")
 ruta_voronoi  <- file.path(path_process, "voronoi.gpkg")
 ruta_isocronas  <- file.path(path_process, "isocronas.gpkg")
 
+##
+ruta_escuelas  <- file.path(path_process, "escuelas.gpkg")
+ruta_poblacion  <- file.path(path_process, "POP.gpkg")
+
 ```
 
 
@@ -67,7 +71,7 @@ ruta_isocronas  <- file.path(path_process, "isocronas.gpkg")
 
 ## Cargar capas
 
-La zona de interés
+### La zona de interés
 
 
 ```{r 204_cargar_aoi_gpkg}
@@ -85,6 +89,8 @@ pdi  <- sf::st_read(ruta_aoi,
 
 # mapview(aoi)
 ```
+
+### Áreas de influencia
 
 ```{r 210_voronoi}
 # B. Polígonos de Voronoi
@@ -131,6 +137,27 @@ punto_rebelde <- st_transform(pdi, crs = 4326) |>
   filter(Escuela == "Las tres cruces")
 ```
 
+
+### Población y edificaciones
+
+
+```{r 210_escuelas}
+escuelas <- sf::st_read(ruta_escuelas,
+                       layer = "escuelas_geo",
+                       quiet = TRUE) |> 
+  select(c("name", "amenity", "education", "geom"))
+```
+
+```{r 210_Población}
+POP <- sf::st_read(ruta_poblacion,
+                       layer = "Population_geo",
+                       quiet = TRUE)
+```
+
+
+
+
+
 ## Paletas de colores
 
 
@@ -170,6 +197,39 @@ pal_buffers <- colorFactor(
   domain = B100$Clase
 )
 
+
+
+# Creamos la paleta de escala de grises para la columna 'education'
+# Si tienes valores NA, Leaflet les asignará automáticamente el color de na.color
+pal_escuelas <- colorFactor(
+  palette = "Greys", 
+  domain = escuelas$education,
+  na.color = "#999999" # Gris medio para registros que no tengan este campo relleno
+)
+
+
+# Definimos cortes manuales para "estirar" los colores en los valores bajos
+cortes <- c(0, 5, 10, 25, 50, 100, 200, 300)
+
+# Corrección: Usamos tus colores personalizados dentro de colorBin
+colores_personalizados <- c("#F0F0F0", viridisLite::inferno(7))
+
+pal_poblacion <- colorBin(
+  palette = colores_personalizados, # 👈 AQUÍ: cambiamos "inferno" por tu vector
+  domain = POP$Population_2025,
+  bins = cortes,
+  na.color = "transparent"
+)
+
+# Alternativa clásica de cartografía de población
+# colores_ylorrd <- c("#F0F0F0", RColorBrewer::brewer.pal(7, "YlOrRd"))
+
+# pal_poblacion_alt <- colorBin(
+#   palette = colores_ylorrd,
+#   domain = aoi_polys$Population_2025,
+#   bins = cortes,
+#   na.color = "transparent"
+# )
 ```
 
 ## Leaflet
@@ -390,7 +450,11 @@ m4 <- m3 |>
 # Mostramos el mapa m4 modificado
 m4
 ```
+
+
 ### Leaflet Mediciones
+
+
 
 ```{r m5_mediciones}
 #| warning: false
@@ -503,6 +567,161 @@ m5 <- m4 |>
 # Renderizamos el mapa definitivo en el documento QMD
 m5
 ```
+
+
+
+```{r m6_escuelas}
+#| warning: false
+#| message: false
+# ==============================================================================
+# PASO 5: INTEGRACIÓN TOTAL - AÑADIR POLÍGONOS DE ESCUELAS, PDI Y CONTROLES
+# ==============================================================================
+
+
+
+# 2. Vector auxiliar con los niveles de clase para las leyendas de NO2 y análisis
+niveles_clase <- c("Bueno", "Regular")
+
+m6 <- m4 |> 
+  
+  # ----------------------------------------------------------------------------
+  # NUEVA CAPA: Recintos y Edificios de los Centros Educativos (Polígonos OSM)
+  # ----------------------------------------------------------------------------
+  addPolygons(
+    data = escuelas, # Al venir de tu paso anterior, ya está estrictamente en EPSG:4326
+    fillColor = ~pal_escuelas(education),
+    fillOpacity = 0.6,
+    color = "#555555",                  # Borde gris oscuro para el polígono
+    weight = 1.5,                       # Grosor del contorno
+    opacity = 0.8,
+    group = "Centros de Educación (OSM)",
+    popup = ~paste(                     # Popup con los tres campos solicitados
+      "<b>🏢 Información del Centro:</b><br>",
+      "<hr style='margin: 5px 0;'>",
+      "<b>Nombre:</b> ", ifelse(is.na(name), "Sin nombre registrado", name), "<br>",
+      "<b>Tipo:</b> ", amenity, "<br>",
+      "<b>Nivel Educativo:</b> ", ifelse(is.na(education), "No especificado", education)
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      color = "#111111",
+      fillOpacity = 0.8,
+      bringToFront = TRUE
+    )
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # A. CAPA: Puntos de medición (PDI) con sus Popups informativos
+  # ----------------------------------------------------------------------------
+  addCircleMarkers(
+    data = st_transform(pdi, crs = 4326), 
+    radius = 6,                           
+    fillColor = ~pal_no2(Clase),          
+    fillOpacity = 0.9,
+    color = "#333333",                    
+    weight = 1,
+    group = "Puntos NO₂ (Escuelas)",
+    label = ~paste("Escuela:", Escuela),  
+    popup = ~paste(                       
+      "<b>🏫 ", Escuela, "</b><br>",
+      "<hr style='margin: 5px 0;'>",
+      "<b>💨 NO₂:</b> ", round(NO2, 1), " µg/m³<br>",
+      "<b>📍 Ubicación:</b> ", position, "<br>",
+      "<b>⭐ Evaluación:</b> ", Clase
+    )
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # B. CAPA DE CONTROL: Marcador Especial "Las tres cruces" (punto_rebelde)
+  # ----------------------------------------------------------------------------
+  addAwesomeMarkers(
+    data = st_transform(punto_rebelde, crs = 4326),
+    icon = makeAwesomeIcon(icon = "info-sign", markerColor = "orange", iconColor = "white"),
+    group = "Punto de control (Red vial)",
+    popup = ~paste(
+      "<b>⚠️ Nota de Enrutamiento:</b><br>",
+      "<b>📍 Lugar:</b> ", Escuela, "<br>",
+      "El punto original se encuentra fuera de su isócrona debido a que el motor ",
+      "de cálculo (ORS) tuvo que desplazar (<i>snapping</i>) el origen virtual a la ",
+      "vía peatonal transitable más cercana en OpenStreetMap."
+    )
+  ) |> 
+
+  # ----------------------------------------------------------------------------
+  # C. LEYENDAS (Añadimos la nueva leyenda gris de tipología escolar)
+  # ----------------------------------------------------------------------------
+  
+  # Leyenda Nueva: Clasificación de Escuelas por nivel
+  addLegend(
+    position = "bottomright", 
+    pal = pal_escuelas,
+    values = escuelas$education,
+    title = "Nivel Educativo (OSM)",
+    opacity = 0.8,
+    group = "Centros de Educación (OSM)"
+  ) |> 
+
+  # Leyenda 1: Puntos de NO2
+  addLegend(
+    position = "bottomright",
+    pal = pal_no2,
+    values = niveles_clase,
+    title = htmltools::HTML("NO<sub>2</sub> (Escuelas)"),
+    opacity = 1,
+    group = "Puntos NO₂ (Escuelas)"
+  ) |> 
+
+  # Leyenda 2: Isocronas
+  addLegend(
+    position = "topright",
+    pal = pal_isocronas,
+    values = niveles_clase,
+    title = "Isocronas (5 minutos a pie)",
+    group = "Isocronas - Bueno", 
+    opacity = 0.7
+  ) |> 
+  
+  # Leyenda 3: Voronoi
+  addLegend(
+    position = "topright",
+    pal = pal_voronoi,
+    values = niveles_clase,
+    title = "Voronoi",
+    group = "Voronoi",
+    opacity = 0.6
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # D. ACTUALIZACIÓN FINAL DEL PANEL DE CONTROL DE CAPAS
+  # ----------------------------------------------------------------------------
+  addLayersControl(
+    position = "topleft",
+    baseGroups = c("CartoDB", "OSM", "WorldImagery"),
+    overlayGroups = c(
+      "Límite Municipal (AOI)", 
+      "Centros de Educación (OSM)",         # 👈 NUEVA CAPA CONTROLABLE
+      "Puntos NO₂ (Escuelas)",
+      "Punto de control (Red vial)",
+      "Isocronas - Bueno", 
+      "Isocronas - Regular", 
+      "Voronoi", 
+      grupos_buffers
+    ),
+    options = layersControlOptions(collapsed = TRUE, autoZIndex = TRUE)
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # E. COMPLEMENTOS EXTRAS (Tus herramientas de utilidad)
+  # ----------------------------------------------------------------------------
+  addMiniMap(toggleDisplay = TRUE, position = "bottomleft") |> 
+  addMeasure(position = "topleft", primaryLengthUnit = "meters", primaryAreaUnit = "sqmeters") |> 
+  addResetMapButton()
+
+# Renderizamos el mapa definitivo en el documento QMD
+m6
+
+```
+
 
 
 

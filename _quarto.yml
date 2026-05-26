@@ -14,6 +14,7 @@ book:
     - part: "EL ÁREA DE ESTUDIO"
       chapters:
          - 101-Escuelas.qmd
+         - 102-POPulation.qmd
 #        - 100-_Divisiones Euskadi.qmd
 #        - 101-proceso_01.qmd
 #        - 102-proceso_02.qmd
@@ -25,7 +26,7 @@ book:
         - 202-Isocronas-3k.qmd
         - 203-Buffers.qmd
         - 204-Voronoi.qmd
-        - 210-Influenccia_Vizz.qmd
+        - 210-Influencia_Vizz.qmd
 #        - 20-RSI_Sentinel2.qmd
 #    - part: "FAUNA"
 #      chapters:
