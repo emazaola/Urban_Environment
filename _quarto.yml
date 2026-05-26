@@ -16,8 +16,6 @@ book:
          - 101-Escuelas.qmd
          - 102-POPulation.qmd
 #        - 100-_Divisiones Euskadi.qmd
-#        - 101-proceso_01.qmd
-#        - 102-proceso_02.qmd
     - part: "CONTAMINACIÓN NO2"
       chapters:
         - 201-data_classification.qmd
@@ -54,8 +52,9 @@ format:
     css: custom.css
     theme: flatly
     toc: true
-    toc-depth: 2
+    toc-depth: 3
     number-sections: true
+    code-fold: true
 
 editor: source  
 

@@ -275,7 +275,7 @@ m1 <- leaflet() |>
 m1
 ```
 
-### Leaflet Voronoi
+### Leaflet VORONOI
 
 
 ```{r m2_voronoi}
@@ -308,7 +308,7 @@ m2 <- m1 |>
 m2
 ```
 
-
+### Leaflet BUFFERS
 
 ```{r m3_buffers}
 # Creamos un vector con los nombres de los grupos de los buffers para el panel de control
@@ -349,14 +349,14 @@ m3 <- m2 |>
     options = layersControlOptions(collapsed = TRUE, autoZIndex = TRUE)
   ) |> 
   
-  # 3. Mantenemos tu fantástica idea: ocultar los buffers por defecto para no saturar el mapa al abrirlo
+  # Ocultar los buffers por defecto para no saturar el mapa al abrirlo
   hideGroup(grupos_buffers)
 
 # Mostramos el mapa m3 en el documento
 m3
 ```
 
-### Leaflet Isocronas
+### Leaflet ISOCRONAS
 
 ```{r m4_isocronas}
 # ==============================================================================
@@ -568,7 +568,7 @@ m5 <- m4 |>
 m5
 ```
 
-
+### Leaflet ESCUELAS
 
 ```{r m6_escuelas}
 #| warning: false
@@ -723,6 +723,206 @@ m6
 ```
 
 
+### Leaflet POBLACIÓN
+
+```{r m7_poblacion}
+#| warning: false
+#| message: false
+
+# ==============================================================================
+# PASO 5: INTEGRACIÓN TOTAL + CAPA DE POBLACIÓN (m7)
+# ==============================================================================
+
+m7 <- m4 |> 
+  
+  # ----------------------------------------------------------------------------
+  # BASE ESPACIAL: Malla de Población JRC (Polígonos con Inferno) 👈 ¡NUEVA!
+  # ----------------------------------------------------------------------------
+  addPolygons(
+    data = POP,                         # Tu capa vectorial en WGS 84
+    fillColor = ~pal_poblacion(Population_2025),
+    fillOpacity = 0.5,                  # Opacidad media para que deje ver las calles de fondo
+    color = "transparent",              # ⚠️ Quitamos los bordes de la cuadrícula para que no sature el mapa
+    group = "Densidad de Población (JRC)",
+    label = ~paste0("Población estim.: ", round(Population_2025, 1), " hab."), # Al pasar el ratón
+    popup = ~paste0(                    # Al hacer clic
+      "<b>📊 Datos de Población:</b><br>",
+      "<hr style='margin: 5px 0;'>",
+      "<b>Estimación (2025):</b> ", round(Population_2025, 1), " habitantes/celda<br>",
+      "<b>Fuente:</b> JRC Global Human Settlement Layer"
+    ),
+    highlightOptions = highlightOptions(
+      weight = 1.5,
+      color = "#FFFFFF",                # Al pasar por encima se ilumina el borde en blanco
+      fillOpacity = 0.7,
+      bringToFront = FALSE              # ⚠️ CRÍTICO: Mantiene la celda abajo, sin tapar las escuelas ni los buffers
+    )
+  ) |> 
+
+  # ----------------------------------------------------------------------------
+  # CAPA INTERMEDIA: Recintos y Edificios de los Centros Educativos (Polígonos OSM)
+  # ----------------------------------------------------------------------------
+  addPolygons(
+    data = escuelas, 
+    fillColor = ~pal_escuelas(education),
+    fillOpacity = 0.6,
+    color = "#555555",                  
+    weight = 1.5,                       
+    opacity = 0.8,
+    group = "Centros de Educación (OSM)",
+    popup = ~paste(                     
+      "<b>🏢 Información del Centro:</b><br>",
+      "<hr style='margin: 5px 0;'>",
+      "<b>Nombre:</b> ", ifelse(is.na(name), "Sin nombre registrado", name), "<br>",
+      "<b>Tipo:</b> ", amenity, "<br>",
+      "<b>Nivel Educativo:</b> ", ifelse(is.na(education), "No especificado", education)
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      color = "#111111",
+      fillOpacity = 0.8,
+      bringToFront = TRUE
+    )
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # CAPA SUPERIOR A: Puntos de medición (PDI) con sus Popups informativos
+  # ----------------------------------------------------------------------------
+  addCircleMarkers(
+    data = st_transform(pdi, crs = 4326), 
+    radius = 6,                           
+    fillColor = ~pal_no2(Clase),          
+    fillOpacity = 0.9,
+    color = "#333333",                    
+    weight = 1,
+    group = "Puntos NO₂ (Escuelas)",
+    label = ~paste("Escuela:", Escuela),  
+    popup = ~paste(                       
+      "<b>🏫 ", Escuela, "</b><br>",
+      "<hr style='margin: 5px 0;'>",
+      "<b>💨 NO₂:</b> ", round(NO2, 1), " µg/m³<br>",
+      "<b>📍 Ubicación:</b> ", position, "<br>",
+      "<b>⭐ Evaluación:</b> ", Clase
+    )
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # CAPA SUPERIOR B: Marcador Especial "Las tres cruces" (punto_rebelde)
+  # ----------------------------------------------------------------------------
+  addAwesomeMarkers(
+    data = st_transform(punto_rebelde, crs = 4326),
+    icon = makeAwesomeIcon(icon = "info-sign", markerColor = "orange", iconColor = "white"),
+    group = "Punto de control (Red vial)",
+    popup = ~paste(
+      "<b>⚠️ Nota de Enrutamiento:</b><br>",
+      "<b>📍 Lugar:</b> ", Escuela, "<br>",
+      "El punto original se encuentra fuera de su isócrona debido a que el motor ",
+      "de cálculo (ORS) tuvo que desplazar (<i>snapping</i>) el origen virtual a la ",
+      "vía peatonal transitable más cercana en OpenStreetMap."
+    )
+  ) |> 
+
+  # ----------------------------------------------------------------------------
+  # LEYENDAS (Añadimos la nueva leyenda inferno de Población)
+  # ----------------------------------------------------------------------------
+  
+  # Nueva Leyenda: Población (Inferno)
+  addLegend(
+    position = "bottomleft",            # Balanceamos poniéndola abajo a la izquierda junto al minimapa
+    pal = pal_poblacion,
+    values = POP$Population_2025,
+    title = "Densidad de Población (JRC)",
+    opacity = 0.7,
+    group = "Densidad de Población (JRC)"
+  ) |> 
+
+  # Leyenda: Clasificación de Escuelas por nivel
+  addLegend(
+    position = "bottomright", 
+    pal = pal_escuelas,
+    values = escuelas$education,
+    title = "Nivel Educativo (OSM)",
+    opacity = 0.8,
+    group = "Centros de Educación (OSM)"
+  ) |> 
+
+  # Leyenda: Puntos de NO2
+  addLegend(
+    position = "bottomright",
+    pal = pal_no2,
+    values = niveles_clase,
+    title = htmltools::HTML("NO<sub>2</sub> (Escuelas)"),
+    opacity = 1,
+    group = "Puntos NO₂ (Escuelas)"
+  ) |> 
+
+  # Leyenda: Isocronas
+  addLegend(
+    position = "topright",
+    pal = pal_isocronas,
+    values = niveles_clase,
+    title = "Isocronas (5 minutos a pie)",
+    group = "Isocronas - Bueno", 
+    opacity = 0.7
+  ) |> 
+  
+  # Leyenda: Voronoi
+  addLegend(
+    position = "topright",
+    pal = pal_voronoi,
+    values = niveles_clase,
+    title = "Voronoi",
+    group = "Voronoi",
+    opacity = 0.6
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # PANEL DE CONTROL DE CAPAS ACTUALIZADO
+  # ----------------------------------------------------------------------------
+  addLayersControl(
+    position = "topleft",
+    baseGroups = c("CartoDB", "OSM", "WorldImagery"),
+    overlayGroups = c(
+      "Límite Municipal (AOI)", 
+      "Densidad de Población (JRC)",      # 👈 NUEVA CAPA EN EL MENÚ DESPLEGABLE
+      "Centros de Educación (OSM)", 
+      "Puntos NO₂ (Escuelas)",
+      "Punto de control (Red vial)",
+      "Isocronas - Bueno", 
+      "Isocronas - Regular", 
+      "Voronoi", 
+      grupos_buffers
+    ),
+    options = layersControlOptions(collapsed = TRUE, autoZIndex = TRUE)
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # COMPLEMENTOS EXTRAS
+  # ----------------------------------------------------------------------------
+  addMiniMap(toggleDisplay = TRUE, position = "bottomleft") |> 
+  addMeasure(position = "topleft", primaryLengthUnit = "meters", primaryAreaUnit = "sqmeters") |> 
+  addResetMapButton()|> 
+  
+  # ----------------------------------------------------------------------------
+  # ⚠️ CONTROL DE APAGADO INICIAL SELECTIVO
+  # ----------------------------------------------------------------------------
+  hideGroup(
+    c(
+      "Densidad de Población (JRC)",
+      "Punto de control (Red vial)",
+      "Isocronas - Bueno",
+      "Isocronas - Regular",
+      "Voronoi",
+      grupos_buffers                  # Como grupos_buffers es un vector de texto, c() lo acopla perfectamente
+    )
+  )
+
+
+
+# Renderizamos el mapa definitivo con población integrada
+m7
+```
+
 
 
 ## Guardar Leaflet
@@ -737,7 +937,6 @@ path_map <- paste0("../../500_resultados/",
 
 
 ```{r}
-
 #Crear carpeta si no existe
 
 dir.create(
@@ -750,9 +949,8 @@ dir.create(
 
 
 ```{r}
-# map <- map_POP3
-### Salva el mapa en un html --------------
-
+#| message: false
+#| warning: false
 
 htmlwidgets::saveWidget(
   m5,
@@ -769,9 +967,47 @@ htmlwidgets::saveWidget(
 
 
 
+```{r}
+#| message: false
+#| warning: false
+
+
+htmlwidgets::saveWidget(
+  m6,
+  file = paste0(
+    path_map,
+    params$aoi,
+    "_",
+    params$year,
+    "_Calidad_Ambiental_Escuelas.html"
+  )
+)
+
+```
 
 
 
+```{r}
+#| message: false
+#| warning: false
+
+htmlwidgets::saveWidget(
+  m7,
+  file = paste0(
+    path_map,
+    params$aoi,
+    "_",
+    params$year,
+    "_Calidad_Ambiental_Population.html"
+  )
+)
+
+```
+
+
+```{r}
+
+```
 
 
 
