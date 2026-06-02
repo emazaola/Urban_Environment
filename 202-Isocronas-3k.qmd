@@ -9,11 +9,11 @@ params:
   variable: "no2"
 ---
 
-## librerias
+## Librerias
 
 
 
-```{r setup}
+```{r setup_202}
 
 #| include: false
 #| message: false

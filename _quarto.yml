@@ -8,23 +8,32 @@ book:
   search: true
   chapters:
     - index.qmd
-    - part: "Inicio"
+    
+    - part: "Antecedentes"
       chapters:
         - 10-recursos.qmd
+        
     - part: "EL ÁREA DE ESTUDIO"
       chapters:
          - 101-Escuelas.qmd
          - 102-POPulation.qmd
+         - 103_red_vial.qmd
 #        - 100-_Divisiones Euskadi.qmd
+
     - part: "CONTAMINACIÓN NO2"
       chapters:
         - 201-data_classification.qmd
+        
     - part: "ZONAS DE EXPOSICIÓN Y PROXIMIDAD"
       chapters:
         - 202-Isocronas-3k.qmd
         - 203-Buffers.qmd
         - 204-Voronoi.qmd
         - 210-Influencia_Vizz.qmd
+      
+      - part: "COVARIABLES DEL MODELO LUR"    
+      chapters:
+        - 301-dist_carretera.qmd
 #        - 20-RSI_Sentinel2.qmd
 #    - part: "FAUNA"
 #      chapters:
