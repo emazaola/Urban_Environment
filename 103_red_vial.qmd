@@ -164,6 +164,24 @@ red_vial <- red_vial |>
 print(table(red_vial$impacto))
 ```
 
+### Tablas resumen
+
+```{r}
+# 1. Adaptación del resumen estadístico incluyendo 'impacto' y 'tipo_via'
+tabla_resumen_vias <- red_vial |> 
+  st_drop_geometry() |>                 # Quitamos la geometría para que sea rápido y limpio
+  group_by(impacto, tipo_via) |>        # 👈 Agrupamos por las dos columnas simultáneamente
+  summarise(
+    cantidad = n(),                     # Contamos cuántos tramos hay de cada combinación
+    .groups = "drop"                    # Desagrupamos al terminar para evitar mensajes de aviso en la consola
+  ) |> 
+  arrange(desc(cantidad))               # Ordenamos de mayor a menor cantidad de tramos
+
+# 2. Imprimir el resultado en el documento
+print(tabla_resumen_vias)
+```
+
+
 #### Gráficos Red vial
 
 
@@ -171,12 +189,14 @@ print(table(red_vial$impacto))
 ```{r}
 
 # Gráfico completo ordenado
-ggplot(tabla_tipos, aes(x = reorder(tipo_carretera, cantidad), y = cantidad)) +
+ggplot(tabla_resumen_vias, aes(x = reorder(tipo_via, cantidad), y = cantidad)) +
+  
   geom_bar(stat = "identity", fill = "#2E86AB") +
+  
   coord_flip() +
   labs(
     title = "Tipos de vías en el Área de Estudio (Erandio)",
-    subtitle = "Fuente: OpenStreetMap (GeoFabrik)",
+    subtitle = "Fuente: OpenStreetMap",
     x = "Tipo de carretera (highway)",
     y = "Número de segmentos"
   ) +
@@ -188,56 +208,41 @@ ggplot(tabla_tipos, aes(x = reorder(tipo_carretera, cantidad), y = cantidad)) +
 ```
 
 
-```{r}
-# 1. Clasificar tipos de vía por impacto en NO₂
-tabla_tipos <- tabla_tipos |>
-  mutate(
-    relevancia_no2 = case_when(
-      tipo_carretera %in% c("motorway", "trunk", "primary") ~ "⭐ Alta (Autopistas/Nacionales)",
-      tipo_carretera %in% c("secondary", "tertiary")        ~ "🟡 Media (Provinciales/Locales)",
-      tipo_carretera %in% c("unclassified", "residential")  ~ "🟢 Baja (Urbanas)",
-      TRUE                                                   ~ "⚪ Irrelevante (Peatonal/Servicio)"
-    ),
-    # Ordenar factores para que la leyenda aparezca en orden lógico
-    relevancia_no2 = factor(relevancia_no2, 
-                            levels = c("⭐ Alta (Autopistas/Nacionales)", 
-                                       "🟡 Media (Provinciales/Locales)", 
-                                       "🟢 Baja (Urbanas)", 
-                                       "⚪ Irrelevante (Peatonal/Servicio)"))
-  )
-
-```
 
 
 ```{r}
-# 2. Gráfico de barras horizontales con escala de colores
-ggplot(tabla_tipos, aes(x = reorder(tipo_carretera, cantidad), 
-                        y = cantidad, 
-                        fill = relevancia_no2)) +
+# Gráfico de barras horizontales adaptado a la nueva estructura limpia
+ggplot(tabla_resumen_vias, aes(x = reorder(tipo_via, cantidad), 
+                               y = cantidad, 
+                               fill = impacto)) +
   geom_bar(stat = "identity", alpha = 0.9) +
-  coord_flip() +
+  coord_flip() + 
+  
+  # Usamos la sintaxis alternativa con la virgulilla (~), hipercompatible con la consola
   scale_fill_manual(
-    name = "Impacto en NO₂",
+    name = expression(Impacto ~ Potencial ~ de ~ NO[2]),
     values = c(
-      "⭐ Alta (Autopistas/Nacionales)" = "#E63946",    # Rojo intenso
-      "🟡 Media (Provinciales/Locales)" = "#F4A261",    # Naranja
-      "🟢 Baja (Urbanas)" = "#2A9D8F",                  # Verde azulado
-      "⚪ Irrelevante (Peatonal/Servicio)" = "#ADB5BD"   # Gris
+      "Bajo"      = "#4EA8DE", 
+      "Medio"     = "#F4A261", 
+      "Alto"      = "#E63946", 
+      "Muy Alto"  = "#700370"
     )
   ) +
+  
   labs(
-    title = "Tipos de vías en el Área de Estudio (Erandio)",
-    subtitle = "Colores según potencial de emisión de NO₂ • Fuente: OSM (GeoFabrik)",
-    x = "Tipo de carretera (highway)",
+    title = "Tipos de vías en el Área de Especialización (Erandio)",
+    subtitle = expression(Segmentos ~ viales ~ según ~ potencial ~ de ~ emisión ~ de ~ NO[2] ~ "• Fuente: OSM"),
+    x = "Tipo de vía (OSM)",
     y = "Número de segmentos"
   ) +
+  
   theme_minimal(base_size = 11) +
   theme(
     axis.text.y = element_text(size = 9),
     legend.position = "bottom",
     legend.title = element_text(face = "bold"),
-    plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
-    plot.subtitle = element_text(hjust = 0.5, color = "gray40")
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
+    plot.subtitle = element_text(hjust = 0.5, color = "gray40", size = 10)
   )
 ```
 
