@@ -1,5 +1,5 @@
 ---
-title: "Covariable: Distancia a Carreteras (`dist_carretera`)"
+title: "Red Vial"
 author: "Gisarte"
 format: html
 params:
@@ -164,7 +164,85 @@ red_vial <- red_vial |>
 print(table(red_vial$impacto))
 ```
 
+#### Gráficos Red vial
 
+
+
+```{r}
+
+# Gráfico completo ordenado
+ggplot(tabla_tipos, aes(x = reorder(tipo_carretera, cantidad), y = cantidad)) +
+  geom_bar(stat = "identity", fill = "#2E86AB") +
+  coord_flip() +
+  labs(
+    title = "Tipos de vías en el Área de Estudio (Erandio)",
+    subtitle = "Fuente: OpenStreetMap (GeoFabrik)",
+    x = "Tipo de carretera (highway)",
+    y = "Número de segmentos"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 8),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+
+```{r}
+# 1. Clasificar tipos de vía por impacto en NO₂
+tabla_tipos <- tabla_tipos |>
+  mutate(
+    relevancia_no2 = case_when(
+      tipo_carretera %in% c("motorway", "trunk", "primary") ~ "⭐ Alta (Autopistas/Nacionales)",
+      tipo_carretera %in% c("secondary", "tertiary")        ~ "🟡 Media (Provinciales/Locales)",
+      tipo_carretera %in% c("unclassified", "residential")  ~ "🟢 Baja (Urbanas)",
+      TRUE                                                   ~ "⚪ Irrelevante (Peatonal/Servicio)"
+    ),
+    # Ordenar factores para que la leyenda aparezca en orden lógico
+    relevancia_no2 = factor(relevancia_no2, 
+                            levels = c("⭐ Alta (Autopistas/Nacionales)", 
+                                       "🟡 Media (Provinciales/Locales)", 
+                                       "🟢 Baja (Urbanas)", 
+                                       "⚪ Irrelevante (Peatonal/Servicio)"))
+  )
+
+```
+
+
+```{r}
+# 2. Gráfico de barras horizontales con escala de colores
+ggplot(tabla_tipos, aes(x = reorder(tipo_carretera, cantidad), 
+                        y = cantidad, 
+                        fill = relevancia_no2)) +
+  geom_bar(stat = "identity", alpha = 0.9) +
+  coord_flip() +
+  scale_fill_manual(
+    name = "Impacto en NO₂",
+    values = c(
+      "⭐ Alta (Autopistas/Nacionales)" = "#E63946",    # Rojo intenso
+      "🟡 Media (Provinciales/Locales)" = "#F4A261",    # Naranja
+      "🟢 Baja (Urbanas)" = "#2A9D8F",                  # Verde azulado
+      "⚪ Irrelevante (Peatonal/Servicio)" = "#ADB5BD"   # Gris
+    )
+  ) +
+  labs(
+    title = "Tipos de vías en el Área de Estudio (Erandio)",
+    subtitle = "Colores según potencial de emisión de NO₂ • Fuente: OSM (GeoFabrik)",
+    x = "Tipo de carretera (highway)",
+    y = "Número de segmentos"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.y = element_text(size = 9),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
+    plot.subtitle = element_text(hjust = 0.5, color = "gray40")
+  )
+```
+
+
+#### Mapas Red vial
 
 ```{r}
 # 1. Definimos la paleta de colores exacta en orden (de Bajo a Muy Alto)

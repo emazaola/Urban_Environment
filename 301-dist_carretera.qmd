@@ -1,0 +1,322 @@
+---
+title: "Covariable: Distancia a Carreteras (`dist_carretera`)"
+author: "Gisarte"
+format: html
+params:
+  aoi: "Erandio"
+  year: 2026
+  variable: "no2"
+---
+
+```{r setup_301}
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary: "Configuración inicial y librerías"
+
+library(sf)
+
+library(tidyverse)
+
+library(here)
+library(mapview)
+
+
+
+library(leaflet)
+library(leaflet.extras)
+library(htmlwidgets)
+library(htmltools)
+
+```
+
+```{r 301_rutas}
+path_data <- here(
+  paste0("../../10_data/geodata/",
+                       "/"
+    
+  )
+)
+
+
+path_process <- here(paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "//"))
+
+```
+
+## Introducción y Lógica Ambiental
+
+La proximidad a las infraestructuras viarias es el principal predictor de la concentración de dióxido de nitrógeno ($NO_2$) en entornos urbanos. El objetivo de este módulo es calcular la distancia euclidiana mínima en metros desde los puntos de muestreo hasta la red de carreteras principales, permitiendo modelar la dispersión pasiva del contaminante a microescala.
+
+
+
+### Cargar AOI u PDI
+
+Tenemos la AOI generada anteriormente
+
+```{r 301-aoi}
+#| message: false
+#| warning: false
+#| 
+  aoi <- read_sf(here(paste0(path_process,"aoi.gpkg"))) |> 
+  st_transform(crs = 25830)
+
+#mapview(aoi)
+```
+
+```{r 301_ruta_mediciones}
+
+ruta_gpkg <- file.path(path_process, "medidas_NO2.gpkg")
+no2 <- st_read(ruta_gpkg, 
+               layer = "NO2_exterior_4326", quiet = TRUE) |>  
+  rename(geometry = geom) |>  
+  st_as_sf(sf_column_name = "geometry")|> 
+  st_transform(crs = 25830)
+
+#mapview(no2)
+
+```
+
+::: {.alert .alert-block .alert-info}
+En Erandio tenemos 16 puntos.
+
+Vamos a generar aleatoriamente 84 más, con sus respectivas coordenadas y mediciones de NO2
+
+```{r 301_generar_puntos_aleatorios}
+#| message: false
+#| warning: false
+
+
+
+# 2. Generar 84 puntos aleatorios dentro del polígono de la AOI
+set.seed(42) # Fijamos semilla para que el proceso sea reproducible al hacer 'render book'
+
+puntos_aleatorios_geom <- st_sample(aoi, size = 84)
+
+
+# 3. Construir el dataframe con los atributos de los 84 puntos nuevos
+puntos_nuevos <- st_as_sf(
+  data.frame(
+    Escuela = paste0("Punto_Aleatorio_", 1:84),
+    NO2 = round(runif(84, min = 18, max = 45), 2),
+    Clase = as.character(NA)
+    ), 
+  geometry = puntos_aleatorios_geom,
+  crs = 25830
+)
+
+# 4. Homogeneizar tu objeto original 'no2' con la estructura UTM 25830
+# Asumimos que tu objeto original tiene columnas tipo: Escuela, NO2, Clase
+pdi_original_utm <- no2 |>  
+  select(Escuela, NO2, Clase) |> 
+  st_transform(crs = 25830)
+```
+
+
+
+```{r 301_union_tables}
+
+# 4. Seleccionar las mismas columnas exactas en los puntos nuevos
+puntos_nuevos <- puntos_nuevos |> 
+  select(Escuela, NO2, Clase)
+
+
+# 5. Fusionar manteniendo la naturaleza espacial 'sf' de forma robusta
+pdi_100_utm <- rbind(pdi_original_utm, puntos_nuevos)
+
+
+
+# 6. Asignar la columna 'Clase' a los nuevos puntos basados en tus umbrales (ej: Bueno/Regular)
+# Si tu umbral para 'Bueno' era por ejemplo menor o igual a 25:
+
+
+  
+# 6. Asignar la columna 'Clase' basada en los umbrales de NO2
+pdi <- pdi_100_utm |> 
+  mutate(
+    Clase = case_when(
+      NO2 <= 20 ~ "Bueno",
+      NO2 > 20 & NO2 <= 40 ~ "Regular",
+      NO2 > 40 ~ "Inaceptable",
+      TRUE ~ "Sin datos"
+    ),
+    # Convertimos a factor para asegurar el orden semántico correcto
+    Clase = factor(Clase, levels = c("Bueno", "Regular", "Inaceptable"))
+  )
+
+# Control de calidad en consola
+message("📊 Total de puntos generados: ", nrow(pdi))
+print(summary(pdi$NO2))
+```
+
+## RED VIAL de `params$aoi`
+
+
+```{r 301_cargar_red_vial}
+# Cargar la red vial limpia y clasificada desde el GeoPackage
+ruta_red_vial <- file.path(path_process, "red_vial.gpkg")
+
+red_vial <- st_read(ruta_red_vial, quiet = TRUE)
+
+# Control de seguridad: Verificar que ambas capas comparten exactamente el mismo CRS proyectado
+message("🌍 CRS de los PDI: ", st_crs(pdi)$epsg)
+message("🚗 CRS de la Red Vial: ", st_crs(red_vial)$epsg)
+
+```
+
+
+## CALCULAR DISTANCIAS MINIMAS
+
+
+Para calcular la distancia desde cada punto de medición (`pdi`) hasta la carretera más cercana, generamos la matriz de distancias. Como ambos archivos están en **EPSG:25830** (metros), el cálculo será directo, exacto y ultra rápido:
+
+
+
+```{r 301_MATRIZ_distancias}
+# 1. Calcular la matriz de distancias (Puntos [Filas] x Segmentos de Carretera [Columnas])
+# st_distance devuelve una matriz cruzada con los metros exactos
+matriz_distancias <- st_distance(pdi, red_vial)
+```
+
+
+```{r 301_calculo_distancias_purrr}
+# 1. Convertimos la matriz en una lista donde cada elemento es un PDI con todas sus distancias
+lista_por_puntos <- as.data.frame(t(matriz_distancias)) |> as.list()
+
+# 2. Calculamos el mínimo y redondeamos usando purrr dentro del mutate
+pdi <- pdi |> 
+  mutate(
+    dist_carretera = map_dbl(lista_por_puntos, ~ round(min(.x), 2))
+  )
+```
+
+
+
+
+
+
+
+
+### PLOT DISTANCIAS
+
+```{r 301_grafico_histograma}
+ggplot(pdi, aes(x = dist_carretera, fill = Clase)) +
+  geom_histogram(binwidth = 25, color = "white", alpha = 0.8, position = "stack") +
+  scale_fill_manual(
+    values = c("Bueno" = "#2A9D8F", "Regular" = "#E9C46A", "Inaceptable" = "#E63946"),
+    name = "Calidad del Aire"
+  ) +
+  labs(
+    title = expression(paste("Distribución de Distancias a la Red Vial (", NO[2], ")")),
+    subtitle = "Frecuencia de puntos según su distancia en metros a la carretera más cercana",
+    x = "Distancia mínima a la carretera (metros)",
+    y = "Número de puntos (PDI)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+
+```{r 301_grafico_heatmap}
+
+# 1. Tomamos los 16 puntos reales y los primeros 30 tramos de carretera de la matriz
+matriz_muestra <- matriz_distancias[1:16, 1:30]
+colnames(matriz_muestra) <- paste0("Vía_", 1:30)
+rownames(matriz_muestra) <- pdi$Escuela[1:16]
+
+# 2. Convertimos la matriz en un dataframe largo ("tidy") para ggplot
+df_heatmap <- as.data.frame(matriz_muestra) |> 
+  mutate(Punto = rownames(matriz_muestra)) |> 
+  pivot_longer(cols = starts_with("Vía_"), names_to = "Carretera", values_to = "Distancia") |> 
+  mutate(Distancia = as.numeric(Distancia))
+
+# 3. Dibujamos el Heatmap
+ggplot(df_heatmap, aes(x = Carretera, y = Punto, fill = Distancia)) +
+  geom_tile(color = "white") +
+  # Paleta de colores invertida: los colores oscuros/cálidos significan "muy cerca"
+  scale_fill_viridis_c(option = "magma", direction = -1, name = "Distancia (m)") +
+  labs(
+    title = "Matriz de Distancias Cruzadas (Muestra)",
+    subtitle = "Distancia en metros desde los 16 PDI reales a los primeros 30 tramos viales",
+    x = "Segmentos de Carretera",
+    y = "Puntos de Control Reales"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, size = 7),
+    axis.text.y = element_text(size = 8),
+    plot.title = element_text(face = "bold")
+  )
+
+```
+
+
+
+### MAPA DISTANCIAS
+
+
+
+```{r}
+# 1. Definimos el mapa base común en la primera capa (AOI)
+ mapa_final <- mapview(aoi, 
+                       alpha.regions = 0.1,
+                       layer.name = params$aoi) + 
+   
+   # 2. Añadimos las carreteras (sin repetir map.types para que no cree otro rupo base)
+   mapview(red_vial,
+           zcol = "impacto",
+           layer.name = "Carreteras (OSM)",
+           legend = TRUE) +
+   
+   # 3. Añadimos los puntos de medición
+   mapview(pdi,
+           zcol = "Clase", 
+           palette = c("#2A9D8F", "#E9C46A", "#E63946"),
+           layer.name = "Puntos NO2",
+           cex = 4)
+
+ mapa_final
+```
+
+
+
+
+
+### 📊  El Gráfico de Perfil de Dispersión (Boxplot por Impacto)
+
+Este gráfico cruza la **geografía** con la **estadística** y es brutal para defender tu tesis ambiental. Responde a la pregunta: *¿Están los puntos con peor calidad del aire ("Inaceptable") físicamente más cerca de las carreteras de "Muy Alto" impacto que los puntos "Buenos"?*
+
+Vamos a cruzar los datos para ver cómo se comportan las distancias según la Clase de contaminación:
+
+```{r 301_boxplot_dispersion}
+ggplot(pdi, 
+       aes(x = Clase, y = dist_carretera, fill = Clase)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  # Añadimos los puntos reales encima para ver la distribución exacta (jitter)
+  geom_jitter(width = 0.15, alpha = 0.5, size = 1.5, color = "gray20") +
+  
+  scale_fill_manual(
+    values = c("Bueno" = "#2A9D8F", "Regular" = "#E9C46A", "Inaceptable" = "#E63946"),
+    guide = "none" # Ocultamos la leyenda porque ya está en el eje X
+  ) +
+  labs(
+    title = expression(paste("Relación entre la Contaminación por ", NO[2], " y la Proximidad Vial")),
+    subtitle = "Distribución de las distancias mínimas según la clasificación del punto",
+    x = "Estado de Calidad del Aire en el PDI",
+    y = "Distancia mínima a la carretera (metros)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 11),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
