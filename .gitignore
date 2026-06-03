@@ -6,3 +6,5 @@
 /.quarto/
 .Renviron
 
+
+**/*.quarto_ipynb

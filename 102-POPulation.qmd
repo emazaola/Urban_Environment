@@ -87,10 +87,6 @@ dir.create(
 ```
 
 
-
-
-
-
 ## Cargar AOI
 Tenemos la AOI generada anteriormente
 
@@ -112,8 +108,6 @@ También se puede obtener directamente usando OSM
 place = paste0(params$aoi,", ",params$country)
 ```
 
-
-
 :::
 
 ## ----------------------------------------------------------------------
@@ -126,6 +120,7 @@ Se descarga una vez de GSL data y se guarda.
 El proceso de descarga es el siguiente
 
 
+###-----------------------------------------------------
 ::: {.alert .alert-block .alert-info}
 
 ### GHSL Data
@@ -193,10 +188,8 @@ archivos_tif <- list.files(path = path_data,
 archivos_tif
 ```
 
-
-
 :::
-
+###-----------------------------------------------------
 
 ### Población de la AOI
 
@@ -433,13 +426,13 @@ message("📊 Raster analítico guardado con éxito como GeoTIFF Estándar (UTM)
 ```
 
 
-###---------------------------------
+
+=====================================================
 
 
 
-###---------------------------------
 
-### visualizar leaftlet
+### Visualizar leaftlet
 
 ```{r}
 aoi_POP
@@ -676,3 +669,4 @@ map_POP2
 ```
 
 
+=====================================================

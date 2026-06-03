@@ -4,7 +4,7 @@ project:
 
 book:
   title: "Análisis Ambiental Urbano"
-  description: "Información ambiental obtenida de la constelación Copernicus"
+  description: "Modelo de Información Ambiental para núcleos urbanos"
   search: true
   chapters:
     - index.qmd
@@ -17,7 +17,7 @@ book:
       chapters:
          - 101-Escuelas.qmd
          - 102-POPulation.qmd
-         - 103_red_vial.qmd
+         - 103-red_vial.qmd
 #        - 100-_Divisiones Euskadi.qmd
 
     - part: "CONTAMINACIÓN NO2"
@@ -30,10 +30,13 @@ book:
         - 203-Buffers.qmd
         - 204-Voronoi.qmd
         - 210-Influencia_Vizz.qmd
-      
-      - part: "COVARIABLES DEL MODELO LUR"    
+        
+    - part: "COVARIABLES DEL MODELO LUR"
       chapters:
-        - 301-dist_carretera.qmd
+        - 301-dist_carretera.qmd    
+       
+      
+        
 #        - 20-RSI_Sentinel2.qmd
 #    - part: "FAUNA"
 #      chapters:

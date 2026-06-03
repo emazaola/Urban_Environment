@@ -16,9 +16,6 @@ params:
 
 library(sf)
 library(osmdata)
-#library(DBI)
-#library(duckdb)
-#library(arrow)
 library(tidyverse)
 
 library(here)
@@ -82,8 +79,7 @@ bbox <- st_bbox(
 Consultar a OpenStreetMap TODAS las vías (sin especificar 'value' descarga todo lo que tenga la key 'highway')
 
 
-```{r}
-
+```{r 103_query_osm}
 query_vias <- opq(bbox = bbox)  |> 
   add_osm_feature(key = 'highway') |>   # 👈 Al no poner 'value', descarga TODO (residenciales, sendas, etc.)
   osmdata_sf()

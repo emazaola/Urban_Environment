@@ -115,21 +115,22 @@ mapview(box)
 
 
 ###---------
-## ----------------------------------------------------------------------
+
+
 ::: {.alert .alert-block .alert-info}
 Se puede hacer manual
 
 Ir a la web de OVERPASSTURBO: https://overpass-turbo.eu
 
 Copiar este código en el espacio de **Ejecutar**
-------------
+=====================================================
 [out:json][timeout:30];
 (
   node["amenity"~"school|university|college|kindergarten|music_school|language_school"](43.280,-2.995,43.330,-2.945);
   way["amenity"~"school|university|college|kindergarten|music_school|language_school"](43.280,-2.995,43.330,-2.945);
 );
 out geom;
-------------
+=====================================================
 
 Exportar como geojson
 
@@ -148,7 +149,6 @@ query <- opq(st_bbox(box))  |>   # Usar bbox del área de interés
 ```
 
 
-
 ```{r}
 educ_polygons <- query$osm_polygons
 ```
@@ -157,8 +157,6 @@ educ_polygons <- query$osm_polygons
 ```{r}
 mapview(educ_polygons, zcol="amenity")
 ```
-
-
 
 
 ```{r}
@@ -207,12 +205,9 @@ aoi_utm <- aoi |>
   sf::st_transform(crs = 25830)
 #####--------------------------------------------
 
-
 # Versión Geográfica (grados) para Leaflet
 escuelas_geo <- escuelas |> 
   sf::st_transform(crs = 4326)
-
-
 
 aoi_geo <- aoi |> 
   sf::st_transform(crs = 4326)
@@ -239,10 +234,7 @@ sf::st_write(
 ```
 
 
-
-
-  Guardar Geográficas
-
+Guardar Geográficas
 
 ```{r 204_saveGpkg_geo}
 # Guardamos la capa GEO en el mismo archivo físico
@@ -269,8 +261,6 @@ sf::st_write(
 
 
 
-
-
 ### Guardar parquet
 
 Creamos el folder geoparquet
@@ -289,8 +279,6 @@ dir.create(
   showWarnings = FALSE)
 
 ```
-
-
 
 
 ```{r 204_remove_parqueto}
@@ -318,8 +306,6 @@ archivos_antiguos <- list.files(
 )
 
 ```
-
-
 
 
 ```{r 101_guardar_buffers_parquet}
@@ -362,4 +348,5 @@ suppressWarnings({
 ```
 
 
-#
+
+=====================================================

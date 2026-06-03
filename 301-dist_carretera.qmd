@@ -80,6 +80,11 @@ no2 <- st_read(ruta_gpkg,
 
 ```
 
+
+
+#####-------------------------------------------------------------
+
+
 ::: {.alert .alert-block .alert-info}
 En Erandio tenemos 16 puntos.
 
@@ -88,8 +93,6 @@ Vamos a generar aleatoriamente 84 más, con sus respectivas coordenadas y medici
 ```{r 301_generar_puntos_aleatorios}
 #| message: false
 #| warning: false
-
-
 
 # 2. Generar 84 puntos aleatorios dentro del polígono de la AOI
 set.seed(42) # Fijamos semilla para que el proceso sea reproducible al hacer 'render book'
@@ -151,9 +154,11 @@ pdi <- pdi_100_utm |>
 message("📊 Total de puntos generados: ", nrow(pdi))
 print(summary(pdi$NO2))
 ```
+:::
+
+#####-------------------------------------------------------------
 
 ## RED VIAL de `params$aoi`
-
 
 ```{r 301_cargar_red_vial}
 # Cargar la red vial limpia y clasificada desde el GeoPackage
@@ -260,8 +265,6 @@ ggplot(df_heatmap, aes(x = Carretera, y = Punto, fill = Distancia)) +
 
 
 ### MAPA DISTANCIAS
-
-
 
 ```{r}
 # 1. Definimos el mapa base común en la primera capa (AOI)

@@ -63,6 +63,9 @@ ruta_isocronas  <- file.path(path_process, "isocronas.gpkg")
 ruta_escuelas  <- file.path(path_process, "escuelas.gpkg")
 ruta_poblacion  <- file.path(path_process, "POP.gpkg")
 
+
+ruta_carreteras <- file.path(path_process, "red_vial.gpkg")
+
 ```
 
 
@@ -156,6 +159,13 @@ POP <- sf::st_read(ruta_poblacion,
 
 
 
+### Red vial
+
+```{r 210_carreteras}
+carreteras <- sf::st_read(ruta_carreteras,
+                       layer = "red_vial_geo",
+                       quiet = TRUE)
+```
 
 
 ## Paletas de colores
