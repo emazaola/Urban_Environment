@@ -19,7 +19,7 @@ library(tidyverse)
 library(sf)
 library(terra)
 
-
+library(spatialEco)  # spatial analysis and modelling of ecological systems. otros parámetros
 
 
 library(mapview)
@@ -768,13 +768,6 @@ convergencia/divergencia lateral del flujo
 En resumen: Es la segunda derivada del relieve y permite identificar
 formas como crestas, valles o superficies planas.
 
-
-
---------
-
-```{r}
-library(spatialEco)
-```
 
 ```{r}
 crv <- curvature(dem, 
