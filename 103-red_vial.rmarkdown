@@ -1,0 +1,510 @@
+---
+title: "Red Vial"
+author: "Gisarte"
+format: html
+params:
+  aoi: "Erandio"
+  year: 2026
+  variable: "no2"
+---
+
+```{r setup_103}
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary: "Configuración inicial y librerías"
+
+library(sf)
+library(osmdata)
+library(tidyverse)
+
+library(here)
+library(mapview)
+
+
+
+library(leaflet)
+library(leaflet.extras)
+library(htmlwidgets)
+library(htmltools)
+
+```
+
+```{r 103_rutas}
+path_data <- here(
+  paste0("../../10_data/geodata/",
+                       "/"))
+
+
+path_process <- here(paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "//"))
+# path_process
+# path_data
+```
+
+## Introducción y Lógica Ambiental
+
+La proximidad a las infraestructuras viarias es el principal predictor de la concentración de dióxido de nitrógeno ($NO_2$) en entornos urbanos. El objetivo de este módulo es calcular la distancia euclidiana mínima en metros desde los puntos de muestreo hasta la red de carreteras principales, permitiendo modelar la dispersión pasiva del contaminante a microescala.
+
+
+
+
+## Paso 1. Registrar la AOI en DuckDB
+
+Tenemos la AOI generada anteriormente
+
+```{r}
+aoi <- read_sf(
+  here(paste0(path_process,"aoi.gpkg"))
+  )
+```
+
+
+
+## Paso 2. Obtener el bounding box en WGS84
+
+```{r}
+bbox <- st_bbox(
+  st_transform(aoi, 4326)
+)
+```
+
+
+
+## Paso 3. Crear la tabla carreteras_aoi
+
+Consultar a OpenStreetMap TODAS las vías (sin especificar 'value' descarga todo lo que tenga la key 'highway')
+
+
+```{r 103_query_osm}
+query_vias <- opq(bbox = bbox)  |> 
+  add_osm_feature(key = 'highway') |>   # 👈 Al no poner 'value', descarga TODO (residenciales, sendas, etc.)
+  osmdata_sf()
+```
+
+
+
+```{r}
+red_vial <- query_vias$osm_lines  |> 
+  st_transform(st_crs(aoi)) |> 
+  st_intersection(aoi)|> 
+  # 👈 SELECCIÓN Y LIMPIEZA DE CAMPOS
+  select(
+    osm_id, 
+    tipo_via = highway,  # Conserva el valor (motorway, residential...) y lo renombra para que sea más claro
+    nombre_calle = name, # Conserva el nombre de la calle y lo renombra a español
+    maxspeed             # (Opcional) Velocidad máxima permitida
+  )
+```
+
+
+```{r}
+mapview(red_vial)
+```
+
+### Clasificación de las vías. Impacto NO2
+
+Para clasificar estas vías según su impacto en la generación de NO₂, debemos basarnos en principios de ingeniería de tráfico y emisiones: el NO₂ proviene principalmente de la combustión de vehículos motorizados, siendo el tráfico pesado (camiones), las altas velocidades y las aceleraciones constantes los mayores emisores. Las vías peatonales, ciclistas o de velocidad muy reducida tienen un impacto nulo o residual.
+
+Clasificación (Impacto NO₂)
+
+Muy Alto: Autopistas y autovías principales (motorway, trunk). Soportan un volumen masivo de tráfico y albergan la mayor parte del transporte de mercancías (camiones diésel).
+
+Alto: Carreteras principales conectoras, avenidas urbanas importantes y todos los ramales de incorporación (motorway_link, trunk_link, primary, primary_link, secondary). Son vías con tráfico fluido pero denso, y los ramales (links) acumulan muchas aceleraciones y frenazos que disparan el NO₂.
+
+Medio: Vías secundarias, colectoras de barrios y zonas de servicios/distribución (secondary_link, tertiary, tertiary_link, residential, unclassified, service). El tráfico es fundamentalmente de turismos a menor velocidad.
+
+Bajo: Calles residenciales especiales, vías peatonales, zonas en obras o de movilidad activa (living_street, pedestrian, footway, path, cycleway, steps, track, escape, construction). Tienen tráfico motorizado prohibido, muy restringido (máx. 10-20 km/h) o inexistente.
+
+Notas: 
+**`construction`**: Al estar en obras, el tráfico habitual está cortado. Aunque haya maquinaria, su impacto continuo sobre los sensores urbanos es bajo.
+
+**`unclassified`**: En OpenStreetMap, suele referirse a carreteras locales pavimentadas de menor importancia que las terciarias, por lo que su peso es "Medio".
+
+**`escape`**: Son rampas de frenado de emergencia para camiones sin frenos. Su uso es anecdótico, por lo que se queda en "Bajo".
+
+
+```{r 103_clasificacion_impacto}
+red_vial <- red_vial |> 
+  mutate(
+    impacto = case_when(
+      # 1. IMPACTO MUY ALTO: Grandes ejes de alta velocidad y camiones
+      tipo_via %in% c("motorway", "trunk") ~ "Muy Alto",
+      
+      # 2. IMPACTO ALTO: Arterias principales urbanas y ramales de incorporación/enlace
+      tipo_via %in% c("primary", "secondary", 
+                      "motorway_link", "trunk_link", "primary_link") ~ "Alto",
+      
+      # 3. IMPACTO MEDIO: Vías conectoras menores, calles residenciales comunes y servicios
+      tipo_via %in% c("tertiary", "residential", "unclassified", "service", 
+                      "secondary_link", "tertiary_link") ~ "Medio",
+      
+      # 4. IMPACTO BAJO: Vías peatonales, ciclistas, agrícolas o sin tráfico motorizado continuo
+      tipo_via %in% c("living_street", "pedestrian", "footway", "path", 
+                      "cycleway", "steps", "track", "escape", "construction") ~ "Bajo",
+      
+      # Por si apareciera algún tag inesperado en el futuro
+      TRUE ~ "Por definir"
+    ),
+    # Convertimos 'impacto' en un factor ordenado para que los gráficos y análisis respeten la jerarquía
+    impacto = factor(impacto, levels = c("Bajo", "Medio", "Alto", "Muy Alto"), ordered = TRUE)
+  )
+```
+
+
+```{r}
+# Control de calidad: ver cuántas calles han caído en cada categoría de impacto
+print(table(red_vial$impacto))
+```
+
+### Tablas resumen
+
+```{r}
+# 1. Adaptación del resumen estadístico incluyendo 'impacto' y 'tipo_via'
+tabla_resumen_vias <- red_vial |> 
+  st_drop_geometry() |>                 # Quitamos la geometría para que sea rápido y limpio
+  group_by(impacto, tipo_via) |>        # 👈 Agrupamos por las dos columnas simultáneamente
+  summarise(
+    cantidad = n(),                     # Contamos cuántos tramos hay de cada combinación
+    .groups = "drop"                    # Desagrupamos al terminar para evitar mensajes de aviso en la consola
+  ) |> 
+  arrange(desc(cantidad))               # Ordenamos de mayor a menor cantidad de tramos
+
+# 2. Imprimir el resultado en el documento
+print(tabla_resumen_vias)
+```
+
+
+#### Gráficos Red vial
+
+
+
+```{r}
+
+# Gráfico completo ordenado
+ggplot(tabla_resumen_vias, aes(x = reorder(tipo_via, cantidad), y = cantidad)) +
+  
+  geom_bar(stat = "identity", fill = "#2E86AB") +
+  
+  coord_flip() +
+  labs(
+    title = "Tipos de vías en el Área de Estudio (Erandio)",
+    subtitle = "Fuente: OpenStreetMap",
+    x = "Tipo de carretera (highway)",
+    y = "Número de segmentos"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 8),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+
+
+
+```{r}
+# Gráfico de barras horizontales adaptado a la nueva estructura limpia
+ggplot(tabla_resumen_vias, aes(x = reorder(tipo_via, cantidad), 
+                               y = cantidad, 
+                               fill = impacto)) +
+  geom_bar(stat = "identity", alpha = 0.9) +
+  coord_flip() + 
+  
+  # Usamos la sintaxis alternativa con la virgulilla (~), hipercompatible con la consola
+  scale_fill_manual(
+    name = expression(Impacto ~ Potencial ~ de ~ NO[2]),
+    values = c(
+      "Bajo"      = "#4EA8DE", 
+      "Medio"     = "#F4A261", 
+      "Alto"      = "#E63946", 
+      "Muy Alto"  = "#700370"
+    )
+  ) +
+  
+  labs(
+    title = "Tipos de vías en el Área de Especialización (Erandio)",
+    subtitle = expression(Segmentos ~ viales ~ según ~ potencial ~ de ~ emisión ~ de ~ NO[2] ~ "• Fuente: OSM"),
+    x = "Tipo de vía (OSM)",
+    y = "Número de segmentos"
+  ) +
+  
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.y = element_text(size = 9),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
+    plot.subtitle = element_text(hjust = 0.5, color = "gray40", size = 10)
+  )
+```
+
+
+#### Mapas Red vial
+
+```{r}
+# 1. Definimos la paleta de colores exacta en orden (de Bajo a Muy Alto)
+# Azul claro, Naranja, Rojo, Morado
+colores_impacto <- c(
+  "Bajo"      = "#4EA8DE", # Azul claro (aire limpio / sin motor)
+  "Medio"     = "#F4A261", # Naranja (tráfico residencial o moderado)
+  "Alto"      = "#E63946", # Rojo (arterias principales y enlaces)
+  "Muy Alto"  = "#700370"  # Morado oscuro (autopistas / emisiones críticas)
+)
+
+```
+
+
+```{r}
+# 2. Definimos una escala manual de grosores (linewidth) según el impacto 
+# para que las autopistas (Muy Alto) resalten físicamente sobre los callejones (Bajo)
+grosores_impacto <- c(
+  "Bajo"      = 0.25,
+  "Medio"     = 0.5,
+  "Alto"      = 0.9,
+  "Muy Alto"  = 1.3
+)
+```
+
+
+
+
+```{r}
+mapview(red_vial,
+        zcol = "impacto", 
+        col.regions = c(
+          "Bajo"      = "#4EA8DE", 
+          "Medio"     = "#F4A261", 
+          "Alto"      = "#E63946", 
+          "Muy Alto"  = "#700370"
+        )[levels(red_vial$impacto)], # Sincroniza el nombre del color con el nivel del factor
+        layer.name = "Impacto NO₂ por Vía",
+        legend = TRUE)
+```
+
+```{r}
+# 3. Calculamos los límites (BBox) de Erandio en metros para el "setView" de la cámara
+limites_utm <- st_bbox(aoi)
+```
+
+
+
+```{r}
+ggplot() +
+  # Capa 1: El polígono del municipio (AOI) de Erandio de fondo
+  geom_sf(data = aoi, fill = "gray95", color = "gray70", linewidth = 0.4) +
+  
+  # Capa 2: La red vial filtrada y clasificada (Color y Grosor mapeados por impacto)
+  geom_sf(data = red_vial, 
+          aes(color = impacto, linewidth = impacto),
+          alpha = 0.85) +
+  
+  # Forzamos la paleta de colores personalizada
+  scale_color_manual(values = colores_impacto,
+                     name = "Impacto Potencial NO2") +
+  
+  # Forzamos los grosores personalizados (evita el Warning antiguo al usar scale_linewidth)
+  scale_linewidth_manual(values = grosores_impacto,
+                         name = "Impacto Potencial NO2") +
+  
+  # Encuadre estricto de la cámara al territorio de Erandio
+  coord_sf(
+    xlim = c(limites_utm[["xmin"]], limites_utm[["xmax"]]),
+    ylim = c(limites_utm[["ymin"]], limites_utm[["ymax"]]),
+    expand = TRUE # Añade un ligero margen de cortesía estético
+  ) +
+  
+  # Estética y diseño de mapa limpio
+  theme_minimal() +
+  labs(
+    title = "Clasificación Temática de la Red Vial en Erandio",
+    subtitle = "Potencial de generación de NO2 según tipología de vía",
+    x = "X (UTM)",
+    y = "Y (UTM)"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", size = 12, hjust = 0.5),
+    plot.subtitle = element_text(color = "gray40", size = 10, hjust = 0.5),
+    panel.grid.major = element_line(color = "gray90", linewidth = 0.2),
+    legend.position = "right",
+    legend.title = element_text(face = "bold", size = 9),
+    legend.text = element_text(size = 8)
+  )
+```
+
+
+
+
+
+
+```{r}
+
+mapview(red_vial,
+        zcol = "impacto",
+        col.regions = colores_impacto,
+       # at = c("Bajo", "Medio", "Alto", "Muy Alto"),  
+        legend = TRUE,
+        layer.name = "Impacto Potencial NO₂")  # Título de la leyenda
+
+
+```
+```{r}
+# Crear primero el mapa base con mapview
+m <- mapview(red_vial,
+             zcol = "impacto",
+             col.regions = colores_impacto,
+             lwd = 2,
+             layer.name = "Impacto Potencial NO\u2082")  # Unicode con escape
+
+# Mostrar el mapa
+ 
+  m
+
+```
+
+
+```{r}
+# Asegúrate que tu dataframe tenga el texto con Unicode
+red_vial$descripcion <- "Vía con alto NO₂"  # El ₂ ya está en Unicode
+
+# O crea la etiqueta en el momento del mapa
+m1 <- mapview(red_vial,
+        zcol = "impacto",
+        col.regions = colores_impacto,
+        popup = paste("NO\u2082:", red_vial$impacto),  # Escape Unicode
+        layer.name = "NO\u2082")
+
+
+mapview(aoi,
+        alpha.regions = 0.13,      # ← Transparencia del 70% (0.3 = 30% opaco)
+        col.region = "gray90",     # Color del relleno (gris suave)
+        color = "gray40",          # Color del borde
+        lwd = 1.5) +
+  m1
+```
+
+
+
+## Guardar las capas
+
+### Guardar GPKG
+
+Guardar UTM
+  
+```{r 103_rutasgpkg}
+# 1. Definimos las rutas absolutas para tus dos GeoPackages
+ruta_gpkg_red_vial <-  file.path(path_process, "red_vial.gpkg")
+
+```
+
+
+```{r 103_geometrias}
+# --- PREPARACIÓN DE GEOMETRÍAS ---
+# Versión UTM original (métrica)
+red_vial_utm <- red_vial |> 
+  sf::st_transform(crs = 25830)
+#####--------------------------------------------
+
+
+# Versión Geográfica (grados) para Leaflet
+red_vial_geo <- red_vial |> 
+  sf::st_transform(crs = 4326)
+```
+
+
+
+```{r 103_saveGpkg}
+sf::st_write(
+  red_vial_utm,
+  dsn = ruta_gpkg_red_vial,
+  layer = "red_vial_utm",      # Nombre de la primera capa
+  delete_layer = TRUE,        # Si ya existe esta capa, la sobrescribe
+  quiet = TRUE
+)
+#####--------------------------------------------
+# Guardamos la capa GEO en el mismo archivo físico
+
+sf::st_write(
+  red_vial_geo,
+  dsn = ruta_gpkg_red_vial,
+  layer = "red_vial_geo",      # Nombre de la segunda capa
+  delete_layer = TRUE,        # Sobrescribe solo esta capa si ya existía
+  quiet = TRUE
+)
+
+```
+
+
+
+
+### Guardar parquet
+
+Creamos el folder geoparquet
+
+```{r}
+path_parquet <- here(paste0(path_process, "geoparquet//"))
+```
+
+
+```{r 103_dir_parquet_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_parquet,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+
+
+```{r 103_remove_parqueto}
+#| warning: false
+#| message: false
+
+
+# --- 0. LIMPIEZA AUTOMÁTICA DE PARQUETS ANTIGUOS ---
+# Buscamos todos los archivos en "path_process" que contengan la palabra "isocrona" y terminen en .parquet
+archivos_antiguos <- list.files(
+  path = path_parquet, 
+  pattern = "red_vial.*\\.parquet$",
+  full.names = TRUE
+)
+
+# Si encuentra archivos, los borra del disco de un plumazo
+#if (length(archivos_antiguos_buff) > 0) {
+#  file.remove(archivos_antiguos_buff)
+#}
+
+
+
+```
+
+
+
+```{r}
+#| warning: false
+#| message: false
+# 
+
+# 
+suppressWarnings({
+  sfarrow::st_write_parquet(red_vial_geo,
+                            file.path(path_parquet, "red_vial_geo.parquet"))
+  
+  
+  
+  
+  sfarrow::st_write_parquet(red_vial_utm,
+                            file.path(path_parquet, "red_vial_utm.parquet"))
+})
+
+
+```
+
+
+

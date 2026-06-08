@@ -1,0 +1,1439 @@
+---
+title: "Covariable: Altitud y Pendiente desde DEM (`elevacion_dem`)"
+params:
+  aoi: "Erandio"
+  year: 2026
+  variable: "no2"
+---
+
+## Librerias
+
+```{r setup_104}
+#| message: false
+#| warning: false
+#| code-fold: true
+#| code-summary: "Configuración inicial y librerías"
+
+
+library(tidyverse)
+library(sf)
+library(terra)
+
+
+
+
+library(mapview)
+library(here)
+
+
+#library(leaflet)
+#library(leaflet.extras)
+
+
+Sys.setenv(PROJ_LIB = "C:/Users/Lez_2/AppData/Local/R/win-library/4.4/sf/proj")
+```
+
+
+## Fijar rutas
+
+```{r 104_data_path}
+path_geodata <- here("../../10_data/geodata/2026_Erandio/DEM//")
+# data_path <- here("../../10_data/numeric-data//")
+
+```
+
+
+
+```{r 104_path_process}
+path_DEM <- paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/",
+                       "DEM/")
+path_DEM
+```
+
+
+```{r 104_path_process}
+path_process <- paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/")
+path_process
+```
+
+
+Crear directorio
+
+```{r 104__dir_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_process,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+## Cargar datos
+
+La zona de interés. Cargar AOI
+Tenemos la AOI generada anteriormente
+
+```{r 104-aoi}
+  aoi <- read_sf(here(paste0(path_process,"aoi.gpkg")))
+
+```
+
+
+## DEM
+
+**Instituto Geográfico Nacional**
+
+  Centro de descargas: [Catálogo](https://centrodedescargas.cnig.es/CentroDescargas/catalogo)
+
+  Modelos Digitales de Elevaciones
+
+  Modelo Digital del Terreno - MDT02 : 12  ficheros
+
+  R esolución 2 m
+
+  **Descripción:** Modelo digital del terreno 2ª Cobertura (2015-2021) con paso de malla de 2 metros.
+
+  **Formato:** COG (Cloud Optimized GeoTIFF).
+
+
+
+Cargar los DEM
+```{r}
+dem <- list.files(path_geodata,
+                  pattern = "*.tif$",
+                  full.names = T)
+length(dem)
+```
+
+Hacerlos objeto raster
+
+```{r}
+dem <- map(
+  set_names(dem, paste0("dem_", seq_along(dem))),
+  rast
+)
+
+# dem_rasters
+# dem_rasters |> map(res)
+```
+
+Si son imágenes con solapamiento se utiliza **mosaic**. Sino, se utiliza **merge**.
+
+
+```{r}
+## dem_mosaic <- dem_rasters |> reduce(mosaic)
+```
+
+```{r}
+#| message: false
+#dem merged
+dem <- reduce(dem, merge)
+```
+
+```{r}
+# plot(dem)
+```
+
+
+
+
+```{r}
+aoi_utm <- project(vect(aoi), crs(dem))
+```
+
+
+```{r}
+#| message: false
+dem <- dem |> 
+  crop(aoi_utm) |> 
+  mask(aoi_utm)
+```
+
+
+```{r}
+dem  <- project(dem, crs(vect(aoi)))
+```
+
+
+```{r}
+plot(dem)
+```
+
+### Cambiar a sf 
+
+
+```{r}
+dem_points <- as.points(dem) |> 
+  st_as_sf()|> 
+  rename_with(~ "Altitud", .cols = 1)
+
+
+```
+
+
+```{r}
+ggplot(dem_points) +
+  geom_sf(aes(color = Altitud)) +
+  scale_color_viridis_c() +  # Escala de colores continua (recomendada)
+  theme_minimal() +
+  labs(title = "Mapa de puntos por altitud",
+       color = "Altitud (m)")
+```
+
+```{r}
+res(dem)
+```
+
+
+```{r}
+dem_10m <- aggregate(dem, fact = 5, fun = mean)
+res(dem_10m)  # Verificar: [1] 10 10
+
+# Convertir a polígonos
+dem_poly <- terra::as.polygons(dem_10m, aggregate = FALSE) |> 
+  st_as_sf() |>
+  rename(Altitud = 1)  # Renombrar la primera column
+```
+
+
+
+```{r}
+# Visualizar
+ggplot(dem_poly) +
+  geom_sf(aes(fill = Altitud), color = NA) +  # color=NA elimina bordes
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  labs(title = "DEM con resolución de 10x10 metros",
+       subtitle = paste("Número de polígonos:", nrow(dem_poly)),
+       fill = "Altitud (m)")
+```
+
+
+### Guardar TIF
+
+```{r 104_rutasgpkg}
+writeRaster(dem,
+         paste0(path_DEM, "dem.tif"),
+         overwrite=TRUE)  # para remplazar
+
+```
+
+
+### Guardar GPKG
+```{r}
+write_sf(
+  dem_points, 
+   here(paste0(path_DEM, "DEM_sf.gpkg")),
+  append = FALSE
+)
+```
+
+
+```{r}
+write_sf(
+  dem_poly, 
+   here(paste0(path_DEM, "DEM_poly.gpkg")),
+  append = FALSE
+)
+```
+
+
+
+### Guardar parquet
+
+Creamos el folder geoparquet
+
+```{r}
+path_parquet <- here(paste0(path_DEM, "geoparquet//"))
+```
+
+
+```{r 204_dir_parquet_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_parquet,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+```{r 204_remove_parqueto}
+#| warning: false
+#| message: false
+
+
+# --- 0. LIMPIEZA AUTOMÁTICA DE PARQUETS ANTIGUOS ---
+# Buscamos todos los archivos en "path_process" que contengan la palabra "isocrona" y terminen en .parquet
+archivos_antiguos <- list.files(
+  path = path_parquet, 
+  pattern = "dem.*\\.parquet$",
+  full.names = TRUE
+)
+
+# Si encuentra archivos, los borra del disco de un plumazo
+#if (length(archivos_antiguos_buff) > 0) {
+#  file.remove(archivos_antiguos_buff)
+#}
+
+archivos_antiguos <- list.files(
+  path = path_parquet, 
+  pattern = "den.*\\.parquet$",
+  full.names = TRUE
+)
+```
+
+
+```{r 104_guardar_buffers_parquet}
+#| warning: false
+#| message: false
+# 
+
+# 
+suppressWarnings({
+  sfarrow::st_write_parquet(dem_points,
+                            file.path(path_parquet, "points_dem.parquet"))
+  
+  
+  
+  
+  sfarrow::st_write_parquet(dem_poly,
+                            file.path(path_parquet, "poly10_dem.parquet"))
+})
+```
+
+
+## Pendiente y Orientación
+
+
+```{r}
+# Pendiente en grados
+slope_deg <- terrain(dem, "slope", unit = "degrees")
+
+# Pendiente en radianes (para índices)
+slope_rad <- terrain(dem, "slope", unit = "radians")
+```
+
+#### Reclasificar pendientes
+
+
+Para una visualización más práctica se clasifica el mapa de pendientes
+de la siguiente manera:
+
++--------------+-----------------+-----------------+-----------------+
+| Id           | Pendiente       | Pendiente m     | Clase           |
+|              | mínima          |                 |                 |
++==============+=================+=================+=================+
+| 1            | 0 º             | 3 º             | Baja            |
++--------------+-----------------+-----------------+-----------------+
+| 2            | 3 º             | 5 º             | Suave           |
++--------------+-----------------+-----------------+-----------------+
+| 3            | 5 º             | 10 º            | Media           |
++--------------+-----------------+-----------------+-----------------+
+| 4            | 10 º            | 20 º            | Alta            |
++--------------+-----------------+-----------------+-----------------+
+| 5            | 20 º            | 30 º            | Muy alta        |
++--------------+-----------------+-----------------+-----------------+
+| 6            | 30 º            | 90 º            | Extrema         |
++--------------+-----------------+-----------------+-----------------+
+
+: Clasificación de pendientes
+
+
+```{r}
+ m <- c(-0,    3,  1,
+        3, 5, 2,
+        5, 10, 3,
+        10, 20, 4,
+        20, 30, 5,
+        30, 90,  6)
+
+rcl <- matrix(m, ncol = 3, byrow = TRUE)
+rcl
+```
+
+```{r}
+slope_clas <- classify(slope_deg, rcl)
+```
+
+```{r}
+# Definir las etiquetas para cada clase
+etiquetas <- c("Baja", "Suave", "Media", "Alta", "Muy alta", "Extrema")
+
+# Asignar las etiquetas al raster categórico
+levels(slope_clas) <- data.frame(ID = 1:6, categoria = etiquetas)
+
+# Verificar que se asignaron correctamente
+levels(slope_clas)
+```
+
+
+
+```{r}
+slopecolor <- c("#4aad5a", "#b5d663", "#ffe710", "#ffce08", "#AF963C", "#B50000"#, D1D182"#, "#FBF65D", "#C8E6F8"
+                )
+```
+
+
+```{r}
+plot(slope_clas, 
+     col = slopecolor,
+     main = "Clasificación de Pendientes",
+     xlab = "Longitud", 
+     ylab = "Latitud",
+     plg = list(
+       x = "bottom",
+       title = "Pendiente",
+       cex = 0.8,
+       ncol = 3   # organiza en varias columnas
+     ))
+```
+
+
+
+```{r}
+atributos <- data.frame(
+  VALUE = 1:6,
+  CATEGORIA = c("Baja", "Suave", "Media", "Alta", "Muy alta", "Extrema"),
+  COLOR = c("#4aad5a", "#b5d663", "#ffe710", "#ffce08", "#AF963C", "#B50000"),
+  RANGO = c("0-3°", "3-5°", "5-10°", "10-20°", "20-30°", "30-90°")
+)
+```
+
+
+
+A continuación se analiza los porcentajes de cada clase.
+
+```{r}
+slope_clas  |> 
+  as_tibble() |> 
+  drop_na() |> 
+  count(categoria) |>
+  mutate(porcentaje = n / sum(n) * 100) |>
+  ggplot(aes(x = categoria, y = porcentaje, fill = categoria)) +
+  geom_col() +
+  geom_text(aes(label = paste0(round(porcentaje, 1), "%")), 
+            vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = slopecolor) +
+  labs(title = "Porcentajes de Pendiente",
+       fill = "Pendiente",
+       x = "Pendiente",
+       y = "Porcentaje (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+writeRaster(slope_deg, 
+            here(paste0(path_DEM,
+                        "slope_deg.tif")),
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",            # Fuerza a GDAL a maquetar el archivo como COG nativo
+    "COMPRESS=DEFLATE",      # Compresión sin pérdida ideal para mantener los datos de población
+    "LEVEL=9",               # Nivel máximo de compresión para que ocupe lo mínimo en web
+    "TILING=YES",            # Divide la imagen en azulejos internos (bloques)
+    "OVERVIEWS=AUTO"         # Genera automáticamente las pirámides de resolución para el zoom
+  )
+)
+
+writeRaster(slope_rad, 
+            here(paste0(path_DEM,
+                        "slope_rad.tif")), 
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+
+writeRaster(slope_clas, 
+            here(paste0(path_DEM,
+                        "slope_clas.tif")), 
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+
+
+```
+
+
+
+
+
+
+
+### Orientaciones
+
+**Orientación** (*aspect*): La orientación es la dirección hacia la cual
+está inclinada una superficie (la pendiente), normalmente expresada en
+grados azimutales (0°–360°).
+
+Por ejemplo:
+
+0° o 360° → Norte 90° → Este 180° → Sur 270° → Oeste
+
+Tiene gran importancia en:
+
+Radiación solar Evapotranspiración Distribución de vegetación Procesos
+hidrológicos. 
+
+
+
+```{r}
+# Orientación
+aspect <- terrain(dem, "aspect", unit = "degrees")
+```
+
+
+Para efectos prácticos, se ha clasificado la orientación en 8 clases -
+direcciones:
+
+| Rango (°)     | Clase         |
+|---------------|---------------|
+| 337.5 – 22.5  | Norte (N)     |
+| 22.5 – 67.5   | Noreste (NE)  |
+| 67.5 – 112.5  | Este (E)      |
+| 112.5 – 157.5 | Sureste (SE)  |
+| 157.5 – 202.5 | Sur (S)       |
+| 202.5 – 247.5 | Suroeste (SW) |
+| 247.5 – 292.5 | Oeste (W)     |
+| 292.5 – 337.5 | Noroeste (NW) |
+
+
+```{r}
+aspect_class <- classify(aspect, rbind(
+  c(0, 22.5, 1),
+  c(22.5, 67.5, 2),
+  c(67.5, 112.5, 3),
+  c(112.5, 157.5, 4),
+  c(157.5, 202.5, 5),
+  c(202.5, 247.5, 6),
+  c(247.5, 292.5, 7),
+  c(292.5, 337.5, 8),
+  c(337.5, 360, 1)
+))
+```
+
+
+```{r}
+# Definir las etiquetas para cada clase
+etiquetas_aspect <- c("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+
+# Asignar las etiquetas al raster categórico
+levels(aspect_class) <- data.frame(ID = 1:8, categoria = etiquetas_aspect)
+
+# Verificar que se asignaron correctamente
+levels(aspect_class)
+```
+
+
+```{r}
+aspectcolor <- c(
+  "#d73027",  # N
+  "#fc8d59",  # NE
+  "#fee090",  # E
+  "#e0f3f8",  # SE
+  "#91bfdb",  # S
+  "#4575b4",  # SW
+  "#313695",  # W
+  "#762a83"   # NW
+)
+```
+
+
+
+```{r}
+plot(aspect_class, 
+     col = aspectcolor,
+     main = "Mapa de Orientaciones",
+     xlab = "Longitud", 
+     ylab = "Latitud",
+     plg = list(
+       x = "bottom",
+       title = "Orientaciones",
+       cex = 0.8,
+       ncol = 4   # organiza en varias columnas
+     )
+     
+     )
+```
+
+
+
+```{r}
+atributos <- data.frame(
+  VALUE = 1:8,
+  CATEGORIA = etiquetas_aspect,
+  COLOR = aspectcolor,
+  RANGO = c("337.5-22.5",
+            "22.5-67.5",
+            "67.5-112.5",
+            "112.5-157.5",
+            "157.5- 202.5", 
+            "202.5-247.5",
+            "247.5- 292.5",
+            "292.5-337.5")
+)
+```
+
+
+
+
+
+
+A continuación se analiza los porcentajes de cada clase.
+
+```{r}
+aspect_class  |> 
+  as_tibble() |> 
+  drop_na() |> 
+  count(categoria) |>
+  mutate(porcentaje = n / sum(n) * 100) |>
+  ggplot(aes(x = categoria, y = porcentaje, fill = categoria)) +
+  geom_col() +
+  geom_text(aes(label = paste0(round(porcentaje, 1), "%")), 
+            vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = aspectcolor) +
+  labs(title = "Porcentaje de Orientaciones",
+       fill = "Orientación",
+       x = "Orientación",
+       y = "Porcentaje (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+
+
+
+```{r}
+writeRaster(aspect, 
+            here(paste0(path_DEM,
+                        "aspect.tif")), 
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+```
+
+
+
+```{r}
+writeRaster(aspect_class, 
+            here(paste0(path_DEM,
+                        "aspect_class.tif")), 
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+```
+
+
+
+## Hillshade (modelo de sombras)
+
+Un **mapa de sombras** es una representación del relieve que simula la
+iluminación del terreno mediante una fuente de luz artificial
+(generalmente desde el noroeste).
+
+Se genera a partir de un modelo digital de elevación (MDE) y resalta
+visualmente las formas del terreno mediante zonas iluminadas y
+sombreadas.
+
+Se usa para:
+
+- Mejorar la visualización del relieve 
+- Interpretar formas geomorfológicas
+- Apoyar análisis espaciales en SIG
+
+
+```{r}
+hill <- shade(
+  slope = terrain(dem, "slope", unit="radians"),
+  aspect = terrain(dem, "aspect", unit="radians"),
+  angle = 45,   # altura solar
+  direction = 315  # azimut
+)
+```
+
+
+
+
+```{r}
+# 1. Hillshade en escala de grises
+plot(hill, 
+     col = gray(0:100 / 100), 
+     legend = FALSE,
+     main = "Pendientes",
+     xlab = "Longitud", ylab = "Latitud")
+
+# 2. Superponer orientación con transparencia
+plot(slope_clas, 
+     col = adjustcolor(slopecolor, alpha.f = 0.5), 
+     add = TRUE,
+     plg = list(
+       x = "bottom",
+       title = "Pendiente",
+       cex = 0.8,
+       ncol = 3   # organiza en varias columnas
+     ))
+```
+
+```{r}
+# 1. Hillshade en escala de grises
+plot(hill, 
+     col = gray(2:100 / 100), 
+     legend = FALSE,
+     main = "Orientaciones",
+     xlab = "Longitud", ylab = "Latitud")
+
+# 2. Superponer orientación con transparencia
+plot(aspect_class, 
+     col = adjustcolor(aspectcolor, alpha.f = 0.5), 
+     add = TRUE,
+     plg = list(
+       x = "bottom",
+       title = "Orientación",
+       cex = 0.8,
+       ncol = 4   # organiza en varias columnas
+     ))
+```
+
+
+
+
+```{r}
+writeRaster(hill, 
+            here(paste0(path_DEM,"hillshade.tif")),
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+```
+
+
+## Otros parámetros
+
+### Curvatura del terreno
+
+**Curvatura del terreno** (*terrain curvature*): La curvatura del
+terreno describe cómo cambia la pendiente en el espacio, es decir, la
+tasa de variación de la pendiente.
+
+Se distinguen principalmente:
+
+Curvatura de perfil (longitudinal): en la dirección de máxima pendiente
+Controla la aceleración o desaceleración del flujo Convexa → el flujo se
+dispersa Cóncava → el flujo se concentra Curvatura de plano
+(transversal): perpendicular a la pendiente Controla la
+convergencia/divergencia lateral del flujo
+
+En resumen: Es la segunda derivada del relieve y permite identificar
+formas como crestas, valles o superficies planas.
+
+
+
+--------
+
+```{r}
+library(spatialEco)
+```
+
+```{r}
+crv <- curvature(dem, 
+                 type = "planform")
+```
+
+```{r}
+
+plot(crv, 
+     col = terrain.colors(255),
+     main = "Mapa de Curvatura",
+     xlab = "Longitud", ylab = "Latitud")
+```
+
+
+La clasificación de la curvatura es en: Cóncavo, Plano y Convexo
+
+```{r}
+curv_class <- classify(crv, rbind(
+  c(-Inf, -0.001, 1),   # Cóncavo
+  c(-0.001, 0.001, 2),  # Plano
+  c(0.001, Inf, 3)      # Convexo
+))
+```
+
+```{r}
+levels(curv_class) <- data.frame(
+  value = 1:3,
+  form = c("Cóncavo", "Plano", "Convexo")
+)
+```
+
+
+```{r}
+curv_colors <- c(
+  "#2c7bb6",  # azul → cóncavo
+  "#fee090",  # gris claro → plano
+  "#d7191c"   # rojo → convexo
+)
+```
+
+
+
+
+
+```{r}
+# 1. Hillshade en escala de grises
+plot(hill, 
+     col = gray(2:100 / 100), 
+     legend = FALSE,
+     main = "Curvatura",
+     xlab = "Longitud", ylab = "Latitud")
+
+# 2. Superponer orientación con transparencia
+plot(curv_class, 
+     col = adjustcolor(curv_colors, alpha.f = 0.5), 
+     add = TRUE,
+     plg = list(
+       x = "bottom",
+       title = "Curvatura",
+       cex = 0.8,
+       ncol = 3   # organiza en varias columnas
+     ))
+```
+
+
+```{r}
+curv_class  |> 
+  as_tibble() |> 
+  drop_na() |> 
+  count(form) |>
+  mutate(porcentaje = n / sum(n) * 100) |>
+  ggplot(aes(x = form, y = porcentaje, fill = form)) +
+  geom_col() +
+  geom_text(aes(label = paste0(round(porcentaje, 1), "%")), 
+            vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = curv_colors) +
+  labs(title = "Histograma de Clases de Curvatura",
+       fill = "Curvatura",
+       x = "Curvatura",
+       y = "Porcentaje (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+writeRaster(curv_class, 
+            here(paste0(path_DEM,
+                        "curvatura_class.tif")),
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+```
+
+
+```{r}
+writeRaster(crv, 
+            here(paste0(path_DEM,
+                        "curvatura.tif")),
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+```
+
+
+--------
+```{r}
+curv_profile <- terrain(dem, "flowdir")  # no exactamente curvatura, solo ejemplo
+```
+
+```{r}
+writeRaster(curv_profile, 
+            here(paste0(path_DEM,
+                        "curv_profile.tif")),
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+```
+
+### Rugosidad
+
+
+**Rugosidad del terreno** (*terrain roughness*): La rugosidad mide el
+grado de irregularidad de la superficie topográfica.
+
+Indica cuánto varía la elevación entre celdas vecinas en un MDE.
+
+Baja rugosidad → superficies suaves (llanuras) Alta rugosidad → terrenos
+abruptos (montañosos)
+
+Es importante en:
+
+- Hidrología (retención y escorrentía) 
+- Geomorfología Modelos de hábitat
+
+
+```{r}
+roughness <- terrain(dem, "roughness")
+```
+
+
+
+```{r}
+plot(roughness, 
+     col = terrain.colors(255),
+     main = "Mapa de Rugosidad",
+     xlab = "Longitud", ylab = "Latitud")
+```
+
+
+
+Se clasifica la rugosidad de la siguiente manera: 
+
+| Clase | Rango  | Interpretación       |
+| ----- | ------ | -------------------- |
+| 1     | 0 – 1  | Muy baja (llano)     |
+| 2     | 1 – 3  | Baja                 |
+| 3     | 3 – 6  | Moderada             |
+| 4     | 6 – 12 | Alta                 |
+| 5     | > 12   | Muy alta (escarpado) |
+
+
+```{r}
+rough_class <- classify(roughness, rbind(
+  c(0, 1, 1),
+  c(1, 3, 2),
+  c(3, 6, 3),
+  c(6, 12, 4),
+  c(12, Inf, 5)
+))
+```
+
+```{r}
+levels(rough_class) <- data.frame(
+  value = 1:5,
+  rough = c("Muy baja", "Baja", "Moderada", "Alta", "Muy alta")
+)
+```
+
+
+```{r}
+rough_colors <- c(
+  "#f7fcf0",  # muy baja
+  "#ccebc5",  # baja
+  "#7bccc4",  # moderada
+  "#2b8cbe",  # alta
+  "#084081"   # muy alta
+)
+```
+
+
+```{r}
+# 1. Hillshade en escala de grises
+plot(hill, 
+     col = gray(2:100 / 100), 
+     legend = FALSE,
+     main = "Rugosidad",
+     xlab = "Longitud", ylab = "Latitud")
+
+# 2. Superponer orientación con transparencia
+plot(rough_class, 
+     col = adjustcolor(rough_colors, alpha.f = 0.5), 
+     add = TRUE,
+     plg = list(
+       x = "bottom",
+       title = "Curvatura",
+       cex = 0.8,
+       ncol = 3   # organiza en varias columnas
+     ))
+```
+
+
+
+```{r}
+rough_class  |> 
+  as_tibble() |> 
+  drop_na() |> 
+  count(rough) |>
+  mutate(porcentaje = n / sum(n) * 100) |>
+  ggplot(aes(x = rough, y = porcentaje, fill = rough)) +
+  geom_col() +
+  geom_text(aes(label = paste0(round(porcentaje, 1), "%")), 
+            vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = rough_colors) +
+  labs(title = "Porcentajes de Rugosidad",
+       fill = "Rugosidad",
+       x = "Rugosidad",
+       y = "Porcentaje (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+```{r}
+writeRaster(roughness, 
+            here(paste0(path_DEM,
+                        "roughness.tif")),
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+```
+
+
+
+```{r}
+writeRaster(rough_class, 
+            here(paste0(path_DEM,
+                        "roughness_class.tif")),
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+```
+
+
+
+### Índice de rugosidad del terreno (TRI - Terrain Ruggedness Index)
+
+**Índice de Rugosidad del Terreno** (TRI, *Terrain Ruggedness Index*):
+El TRI es una medida cuantitativa de la rugosidad que calcula la
+diferencia de elevación entre una celda y sus vecinas.
+
+Forma clásica (Riley et al., 1999): Suma (o promedio) de las diferencias
+absolutas de elevación entre una celda central y las 8 celdas
+circundantes.
+
+Interpretación:
+
+Valores bajos → terreno plano Valores altos → terreno escarpado
+
+Se usa ampliamente en:
+
+Análisis geomorfológico Ecología del paisaje Evaluación de accesibilidad
+
+0-80 - level terrain surface.
+
+81-116 - nearly level surface.
+
+117-161 - slightly rugged surface.
+
+162-239 - intermediately rugged surface.
+
+240-497 - moderately rugged surface.
+
+498-958 - highly rugged surface.
+
+gt 959 - extremely rugged surface.
+
+-------------------------------
+
+
+
+
+```{r}
+tri <- terrain(dem, "TRI")
+```
+
+::: {.alert .alert-block .alert-info}
+revisar en: https://search.r-project.org/CRAN/refmans/spatialEco/html/tri.html
+
+elev <- rast(system.file("extdata/elev.tif", package="spatialEco"))
+  ( tri.ext <- tri(elev) )
+  ( tri.app <- tri(elev, exact = FALSE) )
+  plot(c(tri.ext, tri.app))
+:::
+
+
+
+```{r}
+
+plot(tri, 
+     col = terrain.colors(255),
+     main = "Mapa de Índice de Rugosidad del Terreno",
+     xlab = "Longitud", ylab = "Latitud")
+```
+
+
+El TRI Se clasifica de la siguiente manera: 
+
+| Clase | Rango     | Interpretación       |
+| ----- | --------- | -------------------- |
+| 1     | 0 – 0.5   | Muy bajo (llano)     |
+| 2     | 0.5 – 1.5 | Bajo                 |
+| 3     | 1.5 – 3   | Moderado             |
+| 4     | 3 – 5     | Alto                 |
+| 5     | > 5       | Muy alto (escarpado) |
+
+
+
+```{r}
+tri_class <- classify(tri, rbind(
+  c(0, 0.5, 1),
+  c(0.5, 1.5, 2),
+  c(1.5, 3, 3),
+  c(3, 5, 4),
+  c(5, Inf, 5)
+))
+```
+
+```{r}
+levels(tri_class) <- data.frame(
+  value = 1:5,
+  tri = c("Muy bajo", "Bajo", "Moderado", "Alto", "Muy alto")
+)
+```
+
+
+```{r}
+tri_colors <- c(
+  "#f7fcf0",
+  "#ccebc5",
+  "#7bccc4",
+  "#2b8cbe",
+  "#084081"
+)
+```
+
+
+```{r}
+# 1. Hillshade en escala de grises
+plot(hill, 
+     col = gray(2:100 / 100), 
+     legend = FALSE,
+     main = "Índice de Rugosidad del Terreno (TRI)",
+     xlab = "Longitud", ylab = "Latitud")
+
+# 2. Superponer orientación con transparencia
+plot(tri_class, 
+     col = adjustcolor(tri_colors, alpha.f = 0.5), 
+     add = TRUE,
+     plg = list(
+       x = "bottom",
+       title = "TRI",
+       cex = 0.8,
+       ncol = 3   # organiza en varias columnas
+     ))
+```
+
+
+
+```{r}
+tri_class  |> 
+  as_tibble() |> 
+  drop_na() |> 
+  count(tri) |>
+  mutate(porcentaje = n / sum(n) * 100) |>
+  ggplot(aes(x = tri, y = porcentaje, fill = tri)) +
+  geom_col() +
+  geom_text(aes(label = paste0(round(porcentaje, 1), "%")), 
+            vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = tri_colors) +
+  labs(title = "Porcentajes de Índice de Rugosidad del Terreno",
+       fill = "TRI",
+       x = "TRI",
+       y = "Porcentaje (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+
+
+```{r}
+writeRaster(tri, 
+            here(paste0(path_DEM,
+                        "tri.tif")),
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+```
+
+```{r}
+writeRaster(tri_class, 
+            here(paste0(path_DEM,
+                        "tri_class.tif")),
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+```
+
+
+
+
+
+#### Rugosidad e Índice de rugosidad del terreno
+
+La Rugosidad y el Índice de rugosidad del terreno proporciona mucha
+potencia al realizar un análisis combinado. Mientras el TRI mide
+estructura local del relieve, la rugosidad analiza los extremos
+topográficos. Esto te permite comparar la heterogeneidad vs abruptidad e
+identificar patrones geomorfológicos más finos.
+
++-------------+-------------+-------------+---------------------+
+| Caso        | Rugosidad   | TRI         | Interpretación      |
++=============+=============+=============+=====================+
+| Llanura     | baja        | baja        | superficie uniforme |
++-------------+-------------+-------------+---------------------+
+| Ondulado    | media       | baja        | variabilidad        |
+| suave       |             |             | gradual             |
++-------------+-------------+-------------+---------------------+
+| Montañoso   | alta        | alta        | relieve escarpado   |
+| abrupto     |             |             |                     |
++-------------+-------------+-------------+---------------------+
+| Meseta      | alta        | media       | variabilidad sin    |
+| disectada   |             |             | cambios bruscos     |
++-------------+-------------+-------------+---------------------+
+
+
+
+### Índice de posición topográfica (TPI - Topographic Position Index)
+
+
+**Índice de Posición Topográfica** (TPI, *Topographic Position Index*):
+El TPI compara la elevación de una celda con el promedio de elevación de
+su entorno.
+
+TPI = elevación de la celda − elevación media del vecindario
+
+Interpretación:
+
+| Valor   | Forma                               |
+| ------- | ----------------------------------- |
+| TPI < 0 | Valles / depresiones                |
+| TPI ≈ 0 | Zonas planas o pendientes uniformes |
+| TPI > 0 | Crestas / elevaciones / colinas     |
+
+
+- TPI \> 0 → zonas elevadas (crestas, colinas) 
+- TPI ≈ 0 → superficies planas o pendientes uniformes 
+- TPI \< 0 → zonas deprimidas (valles, depresiones)
+
+El resultado depende mucho de la escala (tamaño del vecindario):
+
+Escala pequeña → microformas Escala grande → macroformas
+
+Muy útil para:
+
+- Detectar crestas
+- Detectar fondos de valle
+- Clasificación de formas del relieve
+
+
+```{r}
+tpi <- terrain(dem, "TPI")
+```
+
+
+```{r}
+plot(tpi, 
+     col = terrain.colors(255),
+     main = "Mapa de Índice de Posición Topográfica",
+     xlab = "Longitud", ylab = "Latitud")
+```
+
+
+El TPI Se clasifica de la siguiente manera: 
+
+| Clase | Rango   | Interpretación       |
+| ----- | ------- | -------------------- |
+| 1     | < -3    | Valle profundo       |
+| 2     | -3 a -1 | Valle                |
+| 3     | -1 a 1  | Plano / ladera media |
+| 4     | 1 a 3   | Colina               |
+| 5     | > 3     | Cresta               |
+
+
+
+
+```{r}
+tpi_class <- classify(tpi, rbind(
+  c(-Inf, -3, 1),
+  c(-3, -1, 2),
+  c(-1, 1, 3),
+  c(1, 3, 4),
+  c(3, Inf, 5)
+))
+```
+
+```{r}
+levels(tpi_class) <- data.frame(
+  value = 1:5,
+  tpi = c("Valle profundo", "Valle", "Plano/Ladera", "Colina", "Cresta")
+)
+```
+
+
+```{r}
+tpi_colors <- c(
+  "#313695",  # azul oscuro → valle profundo
+  "#74add1",  # azul → valle
+  "wheat",  # blanco → plano
+  "#f46d43",  # naranja →  colina
+  "#a50026"   # rojo oscuro → cresta
+)
+```
+
+
+```{r}
+# 1. Hillshade en escala de grises
+plot(hill, 
+     col = gray(2:100 / 100), 
+     legend = FALSE,
+     main = "Índice de Posición Topográfica (TPI)",
+     xlab = "Longitud", ylab = "Latitud")
+
+# 2. Superponer orientación con transparencia
+plot(tri_class, 
+     col = adjustcolor(tpi_colors, alpha.f = 0.5), 
+     add = TRUE,
+     plg = list(
+       x = "bottom",
+       title = "Índice de Posición Topográfica",
+       cex = 0.8,
+       ncol = 3   # organiza en varias columnas
+     ))
+```
+
+
+```{r}
+tpi_class  |> 
+  as_tibble() |> 
+  drop_na() |> 
+  count(tpi) |>
+  mutate(porcentaje = n / sum(n) * 100) |>
+  ggplot(aes(x = tpi, y = porcentaje, fill = tpi)) +
+  geom_col() +
+  geom_text(aes(label = paste0(round(porcentaje, 1), "%")), 
+            vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = tpi_colors) +
+  labs(title = "Porcentajes de Índice de Posición Topográfica",
+       fill = "TPI",
+       x = "TPI",
+       y = "Porcentaje (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+
+
+
+```{r}
+writeRaster(tpi, 
+            here(paste0(path_DEM,"tpi.tif")),
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+```
+
+
+```{r}
+writeRaster(tpi_class, 
+            here(paste0(path_DEM,"tpi_class.tif")),
+            overwrite=TRUE,
+  gdal = c(
+    "DRIVER=COG",           
+    "COMPRESS=DEFLATE",      
+    "LEVEL=9",               
+    "TILING=YES",            
+    "OVERVIEWS=AUTO"         
+  )
+)
+```
+
+
+
+```{r}
+
+```
+
+

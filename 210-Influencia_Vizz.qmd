@@ -171,7 +171,7 @@ carreteras <- sf::st_read(ruta_carreteras,
 ## Paletas de colores
 
 
-```{r paletas_leaflet}
+```{r 210_paletas_leaflet}
 # 1. Paleta para las Isocronas (usando los objetos cargados Iso_bueno e Iso_Regular)
 # Combinamos el dominio de ambos para que la paleta cubra las dos clases
 pal_isocronas <- colorFactor(
@@ -241,6 +241,59 @@ pal_poblacion <- colorBin(
 #   na.color = "transparent"
 # )
 ```
+
+### Para la red vial
+
+```{r 210_colores_carreteras}
+# Definimos el vector con nombre para tenerlo como referencia limpia
+colores_impacto <- c(
+  "Bajo"     = "#4EA8DE", 
+  "Medio"    = "#F4A261", 
+  "Alto"     = "#E63946", 
+  "Muy Alto" = "#700370"
+)
+
+# Creamos la función paleta oficial de Leaflet
+# Indicamos los niveles exactos en orden semántico para que la leyenda salga perfecta
+pal_red_vial <- colorFactor(
+  palette = colores_impacto,
+  levels = c("Bajo", "Medio", "Alto", "Muy Alto"),
+  ordered = TRUE
+)
+
+```
+
+La Escala de Grosores (Paso intermedio clave)
+
+Leaflet no tiene una función nativa tipo `weightFactor()` equivalente a la de los colores. Si le pasamos el vector `grosores_impacto` directamente al mapa, no sabrá qué hacer con él.
+
+La forma más eficiente, limpia y robusta de resolverlo es **crear una nueva columna numérica en tu objeto `red_vial`** antes de meterlo en Leaflet (lo que en R llamamos *mutar* el dataset). Así, cada tramo de carretera llevará su grosor en píxeles ya grabado en su propia fila.
+
+Vamos a dejarlo preparado en este bloque:
+
+```{r 210_grosores_leaflet}
+# 1. Definimos el vector con nombre de los grosores en píxeles para Leaflet
+# Nota: En Leaflet, 0.25 puede verse demasiado fino en pantallas de alta resolución. 
+# Te sugiero subir ligeramente los valores (ej: 1, 2, 4, 6) para que sea interactivo,
+# pero mantenemos tu proporción lógica:
+grosores_impacto <- c(
+  "Bajo"     = 1.5,
+  "Medio"    = 3.0,
+  "Alto"     = 4.5,
+  "Muy Alto" = 6.0
+)
+
+# 2. Inyectamos los grosores directamente en los datos de la red vial
+# Usamos el propio factor 'impacto' como índice para asignar el grosor correspondiente
+red_vial <- carreteras |> 
+  mutate(
+    # unname() rompe el named vector y deja números puros limpios para JSON
+    grosor_mapa = grosores_impacto[as.character(impacto)] |> unname()
+  )
+
+```
+
+
 
 ## Leaflet
 
@@ -934,6 +987,288 @@ m7
 ```
 
 
+### Leaflet RED VIAL
+
+
+```{r}
+m1 <- leaflet() |>
+  
+  # 1. Configuración de la vista inicial centrándola en tus coordenadas
+  setView(lng = -2.97859871, lat = 43.31310218, zoom = 14) |> 
+  
+  # 2. Mapas base (Capas de fondo alternativas)
+  addTiles(group = "OSM") |> 
+  addProviderTiles(providers$CartoDB.Positron, group = "CartoDB") |> 
+  addProviderTiles(providers$Esri.WorldImagery, group = "WorldImagery") |> 
+
+  # 3. Capa Base de Polígonos: Límite del Municipio (AOI)
+  addPolygons(
+    data = st_transform(aoi, crs = 4326),
+    color = "darkblue",
+    weight = 2,
+    opacity = 0.8,
+    fillColor = "darkblue",
+    fillOpacity = 0.05,            
+    group = "Límite Municipal (AOI)" 
+  ) |> 
+
+  # 4. NUEVA CAPA: Red Vial Clasificada (Líneas de prueba)
+  # ----------------------------------------------------------------------------
+  addPolylines(
+    data = st_transform(red_vial, crs = 4326), # Transformamos a geográficas para Leaflet
+    color = ~pal_red_vial(impacto),            # Aplica la paleta colorFactor que preparamos
+    weight = ~grosor_mapa,                     # Aplica la columna de píxeles mutada antes
+    opacity = 0.7,                             # Opacidad para que deje ver el fondo
+    group = "Red Vial (Impacto NO2)",          # Nombre del grupo para el control de capas
+    popup = ~paste0(                           # Ventana flotante interactiva al hacer clic
+      "<b>Calle:</b> ", ifelse(is.na(nombre_calle), "Sin nombre", nombre_calle), "<br>",
+      "<b>Tipo:</b> ", tipo_via, "<br>",
+      "<b>Impacto NO₂:</b> ", impacto
+    )
+  ) |> 
+  # ----------------------------------------------------------------------------
+
+  # 5. Panel de Control de Capas (Actualizado con la nueva capa superpuesta)
+  addLayersControl(
+    position = "topleft",
+    baseGroups = c("CartoDB", "OSM", "WorldImagery"),
+    # Añadimos "Red Vial (Impacto NO2)" a los overlayGroups para poder encenderla y apagarla
+    overlayGroups = c("Límite Municipal (AOI)", "Red Vial (Impacto NO2)"),
+    options = layersControlOptions(collapsed = TRUE, autoZIndex = TRUE)
+  )
+
+# Mostramos el mapa m1 en el visor para comprobar colores y grosores
+m1
+```
+
+#### Incorporar Red Vial
+
+```{r m8_integracion_vial}
+#| warning: false
+#| message: false
+
+# ==============================================================================
+# PASO 6: INTEGRACIÓN TOTAL DE TODAS LAS COVARIABLES + RED VIAL (m8)
+# ==============================================================================
+
+m8 <- m4 |> 
+  
+  # ----------------------------------------------------------------------------
+  # BASE ESPACIAL: Malla de Población JRC (Polígonos con Inferno)
+  # ----------------------------------------------------------------------------
+  addPolygons(
+    data = POP,                         
+    fillColor = ~pal_poblacion(Population_2025),
+    fillOpacity = 0.5,                  
+    color = "transparent",              
+    group = "Densidad de Población (JRC)",
+    label = ~paste0("Población estim.: ", round(Population_2025, 1), " hab."), 
+    popup = ~paste0(                    
+      "<b>📊 Datos de Población:</b><br>",
+      "<hr style='margin: 5px 0;'>",
+      "<b>Estimación (2025):</b> ", round(Population_2025, 1), " habitantes/celda<br>",
+      "<b>Fuente:</b> JRC Global Human Settlement Layer"
+    ),
+    highlightOptions = highlightOptions(
+      weight = 1.5,
+      color = "#FFFFFF",                
+      fillOpacity = 0.7,
+      bringToFront = FALSE              
+    )
+  ) |> 
+
+  # ----------------------------------------------------------------------------
+  # 🚗 NUEVA CAPA: Red Vial Clasificada (Líneas con colores y grosores limpios)
+  # ----------------------------------------------------------------------------
+  addPolylines(
+    data = st_transform(red_vial, crs = 4326), # Pasamos a geográficas para Leaflet
+    color = ~pal_red_vial(impacto),            # Aplica la paleta colorFactor
+    weight = ~grosor_mapa,                     # Aplica los grosores limpios (unname)
+    opacity = 0.8,                             
+    group = "Red Vial (Impacto NO2)",          # Nombre del grupo para el control de capas
+    popup = ~paste0(                           
+      "<b>🚗 Red Vial de Erandio:</b><br>",
+      "<hr style='margin: 5px 0;'>",
+      "<b>Calle:</b> ", ifelse(is.na(nombre_calle), "Sin nombre registrado", nombre_calle), "<br>",
+      "<b>Tipo (OSM):</b> ", tipo_via, "<br>",
+      "<b>Impacto Potencial:</b> <span style='font-weight:bold;'>", impacto, "</span>"
+    )
+  ) |> 
+
+  # ----------------------------------------------------------------------------
+  # CAPA INTERMEDIA: Recintos y Edificios de los Centros Educativos (Polígonos OSM)
+  # ----------------------------------------------------------------------------
+  addPolygons(
+    data = escuelas, 
+    fillColor = ~pal_escuelas(education),
+    fillOpacity = 0.6,
+    color = "#555555",                  
+    weight = 1.5,                        
+    opacity = 0.8,
+    group = "Centros de Educación (OSM)",
+    popup = ~paste(                     
+      "<b>🏢 Información del Centro:</b><br>",
+      "<hr style='margin: 5px 0;'>",
+      "<b>Nombre:</b> ", ifelse(is.na(name), "Sin nombre registrado", name), "<br>",
+      "<b>Tipo:</b> ", amenity, "<br>",
+      "<b>Nivel Educativo:</b> ", ifelse(is.na(education), "No especificado", education)
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      color = "#111111",
+      fillOpacity = 0.8,
+      bringToFront = TRUE
+    )
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # CAPA SUPERIOR A: Puntos de medición (PDI) con sus Popups informativos
+  # ----------------------------------------------------------------------------
+  addCircleMarkers(
+    data = st_transform(pdi, crs = 4326), 
+    radius = 6,                               
+    fillColor = ~pal_no2(Clase),          
+    fillOpacity = 0.9,
+    color = "#333333",                    
+    weight = 1,
+    group = "Puntos NO₂ (Escuelas)",
+    label = ~paste("Escuela:", Escuela),  
+    popup = ~paste(                       
+      "<b>🏫 ", Escuela, "</b><br>",
+      "<hr style='margin: 5px 0;'>",
+      "<b>💨 NO₂:</b> ", round(NO2, 1), " µg/m³<br>",
+      "<b>📍 Ubicación:</b> ", position, "<br>",
+      "<b>⭐ Evaluación:</b> ", Clase
+    )
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # CAPA SUPERIOR B: Marcador Especial "Las tres cruces" (punto_rebelde)
+  # ----------------------------------------------------------------------------
+  addAwesomeMarkers(
+    data = st_transform(punto_rebelde, crs = 4326),
+    icon = makeAwesomeIcon(icon = "info-sign", markerColor = "orange", iconColor = "white"),
+    group = "Punto de control (Red vial)",
+    popup = ~paste(
+      "<b>⚠️ Nota de Enrutamiento:</b><br>",
+      "<b>📍 Lugar:</b> ", Escuela, "<br>",
+      "El punto original se encuentra fuera de su isócrona debido a que el motor ",
+      "de cálculo (ORS) tuvo que desplazar (<i>snapping</i>) el origen virtual a la ",
+      "vía peatonal transitable más cercana en OpenStreetMap."
+    )
+  ) |> 
+
+  # ----------------------------------------------------------------------------
+  # LEYENDAS (Añadimos la nueva leyenda de la Red Vial al set existente)
+  # ----------------------------------------------------------------------------
+  
+  # Nueva Leyenda: Red Vial (Lado izquierdo superior para no colapsar las esquinas)
+  addLegend(
+    position = "topright",
+    pal = pal_red_vial,
+    values = c("Bajo", "Medio", "Alto", "Muy Alto"),
+    title = htmltools::HTML("Potencial Emisión NO<sub>2</sub>"),
+    opacity = 0.8,
+    group = "Red Vial (Impacto NO2)"
+  ) |> 
+
+  # Leyenda: Población (Inferno)
+  addLegend(
+    position = "bottomleft",            
+    pal = pal_poblacion,
+    values = POP$Population_2025,
+    title = "Densidad de Población (JRC)",
+    opacity = 0.7,
+    group = "Densidad de Población (JRC)"
+  ) |> 
+
+  # Leyenda: Clasificación de Escuelas por nivel
+  addLegend(
+    position = "bottomright", 
+    pal = pal_escuelas,
+    values = escuelas$education,
+    title = "Nivel Educativo (OSM)",
+    opacity = 0.8,
+    group = "Centros de Educación (OSM)"
+  ) |> 
+
+  # Leyenda: Puntos de NO2
+  addLegend(
+    position = "bottomright",
+    pal = pal_no2,
+    values = niveles_clase,
+    title = htmltools::HTML("NO<sub>2</sub> (Escuelas)"),
+    opacity = 1,
+    group = "Puntos NO₂ (Escuelas)"
+  ) |> 
+
+  # Leyenda: Isocronas
+  addLegend(
+    position = "topright",
+    pal = pal_isocronas,
+    values = niveles_clase,
+    title = "Isocronas (5 minutos a pie)",
+    group = "Isocronas - Bueno", 
+    opacity = 0.7
+  ) |> 
+  
+  # Leyenda: Voronoi
+  addLegend(
+    position = "topright",
+    pal = pal_voronoi,
+    values = niveles_clase,
+    title = "Voronoi",
+    group = "Voronoi",
+    opacity = 0.6
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # PANEL DE CONTROL DE CAPAS ACTUALIZADO CON LA RED VIAL
+  # ----------------------------------------------------------------------------
+  addLayersControl(
+    position = "topleft",
+    baseGroups = c("CartoDB", "OSM", "WorldImagery"),
+    overlayGroups = c(
+      "Límite Municipal (AOI)", 
+      "Densidad de Población (JRC)",      
+      "Red Vial (Impacto NO2)",           # 👈 ¡NUEVA CAPA EN EL MENÚ!
+      "Centros de Educación (OSM)", 
+      "Puntos NO₂ (Escuelas)",
+      "Punto de control (Red vial)",
+      "Isocronas - Bueno", 
+      "Isocronas - Regular", 
+      "Voronoi", 
+      grupos_buffers
+    ),
+    options = layersControlOptions(collapsed = TRUE, autoZIndex = TRUE)
+  ) |> 
+  
+  # ----------------------------------------------------------------------------
+  # COMPLEMENTOS EXTRAS
+  # ----------------------------------------------------------------------------
+  addMiniMap(toggleDisplay = TRUE, position = "bottomleft") |> 
+  addMeasure(position = "topleft", primaryLengthUnit = "meters", primaryAreaUnit = "sqmeters") |> 
+  addResetMapButton() |> 
+  
+  # ----------------------------------------------------------------------------
+  # ⚠️ CONTROL DE APAGADO INICIAL SELECTIVO
+  # ----------------------------------------------------------------------------
+  hideGroup(
+    c(
+      "Densidad de Población (JRC)",
+      "Punto de control (Red vial)",
+      "Isocronas - Bueno",
+      "Isocronas - Regular",
+      "Voronoi",
+      grupos_buffers                  
+    )
+  )
+
+# Renderizamos el mapa definitivo
+m8
+```
+
+
 
 ## Guardar Leaflet
 
@@ -1009,6 +1344,26 @@ htmlwidgets::saveWidget(
     "_",
     params$year,
     "_Calidad_Ambiental_Population.html"
+  )
+)
+
+```
+
+
+
+
+```{r}
+#| message: false
+#| warning: false
+
+htmlwidgets::saveWidget(
+  m8,
+  file = paste0(
+    path_map,
+    params$aoi,
+    "_",
+    params$year,
+    "_Calidad_Ambiental_Carreteras.html"
   )
 )
 

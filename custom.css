@@ -59,3 +59,34 @@ h3 .header-section-number {
   grid-column: 2;
   grid-row: 1 / span 3; /* Hace que el logo cubra las filas de autor y fecha */
 }
+
+
+/* ============================================ */
+/* MEJORA DE CONTRASTE PARA ALERT-INFO */
+/* ============================================ */
+
+.alert-info {
+    background-color: #d9edf7;  /* Azul más claro y suave */
+    color: #31708f;              /* Texto azul oscuro legible */
+    border-color: #bce8f1;
+}
+
+/* Para que los títulos dentro de alert-info sean legibles */
+.alert-info h1, 
+.alert-info h2, 
+.alert-info h3, 
+.alert-info h4, 
+.alert-info h5, 
+.alert-info h6 {
+    color: #1a4d6b !important;  /* Color más oscuro que el verde original */
+}
+
+/* Opcional: mejorar enlaces dentro del alert si los hay */
+.alert-info a {
+    color: #245269;
+    text-decoration: underline;
+}
+
+.alert-info a:hover {
+    color: #0f3b4f;
+}
