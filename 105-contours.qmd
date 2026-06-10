@@ -1,0 +1,280 @@
+---
+title: "CONTORNOS"
+params:
+  aoi: "Erandio"
+  year: 2026
+  variable: "no2"
+---
+
+
+## Cotorno
+
+```{r setup, include=FALSE}
+# Cargar Librerías
+
+library(terra)
+library(sf)
+library(tidyverse)
+
+#library(DT)
+
+library(tidyterra)
+
+# remotes::install_github("riatelab/mapiso")
+library(mapiso)
+library(mapsf)
+
+
+library(terrainr)
+
+
+library(here)
+library(janitor)
+
+
+Sys.setenv(PROJ_LIB = "C:/Users/Lez_2/AppData/Local/R/win-library/4.4/sf/proj")
+
+# para asegurar que terra funcione bien
+# prj <- system.file("proj", package = "terra")[1]
+# Sys.setenv(PROJ_LIB = prj)
+# Sys.setenv(PROJ_DATA = prj)
+```
+
+
+
+A partir del DEM calculado anteriormente, los siguientes paos son:
+
+
+
+
+## Área de interés y máscara
+
+Se parte del DEM calculado antes.
+
+
+```{r 105_path_process}
+path_DEM <- paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/",
+                       "DEM/")
+path_DEM
+```
+
+
+
+```{r}
+dem <- rast(here(paste0(path_DEM, "dem.tif")))
+```
+
+
+## Contornos
+
+```{r}
+minmax(dem)
+```
+
+```{r}
+head(as.data.frame(dem, xy = TRUE))
+
+```
+
+```{r}
+# 1. Extraer min y max
+limites <- terra::minmax(dem)
+val_min <- limites[1]
+val_max <- limites[2]
+
+# 2. Redondear a la decena (múltiplos de 10)
+# floor(-2.35 / 10) * 10 -> -10
+# ceiling(252.09 / 10) * 10 -> 260
+break_min <- floor(val_min / 10) * 10
+break_max <- ceiling(val_max / 10) * 10
+
+# 3. Generar 10 breaks exactos
+mis_breaks <- seq(from = break_min, to = break_max, length.out = 10)
+```
+
+
+```{r}
+demdf <- as.data.frame(dem, xy = TRUE)
+
+
+names(demdf) <- c("x", "y", "altitud")
+
+
+```
+
+
+```{r}
+demdf|> 
+  ggplot(aes(x = x, y = y)) +
+  geom_raster(aes(fill = altitud)) +
+  # Usamos los breaks calculados dinámicamente
+  scale_fill_hypso_tint_c(breaks = mis_breaks) + 
+  labs(fill = "m") +
+  coord_sf() +
+  theme(legend.position = "left")
+```
+
+
+
+
+```{r contornos}
+max <-max(minmax(dem) )
+paso <- 30
+maxi <- round(max /paso,0)*paso+paso
+
+
+
+bks = seq(from = 0, to = maxi, by = paso)
+bks
+```
+
+```{r}
+# isor <- mapiso(x = DEM)
+# bks <- c(0,  200, 400, 600, 800, 1000, 1200, 1400, 1600)
+isor <- mapiso(x = dem, breaks = bks)
+```
+
+```{r}
+head(isor)
+```
+
+
+```{r}
+mf_theme(mar = c(0, 0, 0, 0))
+mf_raster(dem)
+mf_map(isor, col = NA, add = TRUE)
+```
+
+
+
+
+## Curvas de nivel
+
+Se calculan las curvas de nivel a intervalos de 30, 10 y 1 metro.
+
+Intervalos
+
+```{r}
+niveles30 <- seq(from = 0, by = 30, length.out = 10)
+
+niveles10 <- seq(from = 0, by = 10, length.out = 30)
+
+niveles_01 <- seq(from = 0, to = max, by = 1)
+
+```
+
+Cáculo de las curvas de nivel
+
+```{r}
+# 2. Calcular las curvas de nivel directamente desde el DEM
+# terra::as.contour crea un objeto vectorial (SpatVector)
+curvas_nivel30 <- as.contour(dem, levels = niveles30)
+
+curvas_nivel10 <- as.contour(dem, levels = niveles10)
+
+curvas_nivel_01 <- as.contour(dem, levels = niveles_01)
+```
+
+### Curvas 30 m
+
+```{r}
+# 3. Opcional: Echar un vistazo rápido a los datos
+print(curvas_nivel30)
+plot(dem)
+lines(curvas_nivel30, col = "black")
+```
+### Curvas 10 m
+
+```{r}
+# 3. Opcional: Echar un vistazo rápido a los datos
+print(curvas_nivel10)
+plot(dem)
+lines(curvas_nivel10, col = "black")
+```
+### Curvas 1 m
+
+```{r}
+# 3. Opcional: Echar un vistazo rápido a los datos
+print(curvas_nivel_01)
+plot(dem)
+lines(curvas_nivel_01, col = "black")
+```
+
+
+
+
+## Guardar
+
+
+
+
+```{r}
+st_write(isor,
+         paste0(path_DEM, "contour_poly.gpkg"),
+         append = FALSE) #
+```
+
+
+```{r}
+writeVector(curvas_nivel30,
+         paste0(path_DEM, "curvas_nivel30.gpkg"),
+         filetype = "GPKG", 
+        overwrite = TRUE)
+
+```
+
+
+
+```{r}
+writeVector(curvas_nivel10,
+         paste0(path_DEM, "curvas_nivel10.gpkg"),
+         filetype = "GPKG", 
+        overwrite = TRUE)
+
+```
+
+
+
+```{r}
+writeVector(curvas_nivel_01,
+         paste0(path_DEM, "curvas_nivel_01.gpkg"),
+         filetype = "GPKG", 
+        overwrite = TRUE)
+
+```
+
+
+
+## Visualizar
+
+
+```{r plot}
+plot(dem)
+plot(isor)
+# plot(aoi, add=TRUE)
+```
+
+
+
+```{r}
+ggplot() +
+  geom_sf(data = isor, 
+          aes(fill = isomax),
+          color = NA,
+          alpha = 0.7) +
+  # geom_sf(data = data_lines, color = "black") +
+  scale_fill_hypso_tint_c() +
+  labs(fill = "m") +
+  theme_void() +
+  coord_sf(expand = FALSE)+
+  theme(legend.position = "left")
+```
+
+
+
+
+

@@ -6,7 +6,7 @@ params:
   variable: "no2"
 ---
 
-## librerias
+## Librerias
 
 ```{r echo=FALSE, warning=FALSE}
 
@@ -86,13 +86,6 @@ aoi$NOMBRE_TOP <- params$aoi
 # mapview(aoi)
 ```
 
-
-
-
-
-
-
-###------------------------------------------
 Creamos un buffer en metros y luego lo pasamos a coordenadas geométricas
 
 
@@ -116,7 +109,6 @@ mapview(box)
 
 ###---------
 
-
 ::: {.alert .alert-block .alert-info}
 Se puede hacer manual
 
@@ -139,6 +131,9 @@ Guardalo en: **"../../10_data/geodata/"**
 :::
 
 ###-----------------
+
+## CENTROS EDUCATIVOS 
+
 ```{r 101-osm_query}
 # 1. Construir consulta OSM para centros educativos
 query <- opq(st_bbox(box))  |>   # Usar bbox del área de interés
@@ -178,9 +173,9 @@ mapview(list(aoi, educ_polygons),
 
 
 
-## Guardar las capas
+### Guardar las capas
 
-### Guardar GPKG
+#### Guardar GPKG
 
 Guardar UTM
   
@@ -261,7 +256,7 @@ sf::st_write(
 
 
 
-### Guardar parquet
+#### Guardar parquet
 
 Creamos el folder geoparquet
 
@@ -343,9 +338,93 @@ suppressWarnings({
 
 ```
 
+
+
+
+## ZONAS RESIDENCIALES 
+
+Definir la caja de búsqueda para `params$aoi`
+
+
+
+
 ```{r}
+qv <- opq(st_bbox(box)) |> 
+  add_osm_feature(key = "building", 
+                 value = c(
+      # Residencial (tu original)
+      "residential",
+      "apartments",      # Edificios de departamentos
+      "house",           # Casas unifamiliares
+      
+      # Comercial y oficinas
+      "commercial",      # Edificios comerciales
+      "retail",          # Tiendas
+      "office",          # Oficinas
+      
+      # Industrial (importante: alta contribución al calor) [citation:2][citation:8]
+      "industrial",
+      "manufacturing",
+      "warehouse",
+      
+      # Servicios y públicos
+      "public",
+      "civic",
+      "government",
+      
+      # Educación
+      "school",
+      "university",
+      "college",
+      
+      # Salud
+      "hospital",
+      "clinic",
+      
+      # Transporte
+      "transportation",
+      "train_station",
+      "garage",
+      
+      # Otros relevantes
+      "hotel",
+      "religious",
+      "stadium",
+      "supermarket",
+      "kiosk",
+      "barn"             # Almacenes agrícolas
+    )
+  ) 
+```
+
+
+```{r}
+viviendas_osm <- osmdata_sf(qv)$osm_polygons|> 
+  select(c( "building", "amenity","geometry"))
 
 ```
+
+
+```{r}
+viviendas <- st_intersection(viviendas_osm, st_transform(aoi, 4326) )
+```
+
+
+
+```{r}
+mapview(aoi)+
+mapview(viviendas_osm)+
+  mapview(viviendas)
+```
+
+
+
+```{r}
+plot(viviendas)
+```
+
+
+
 
 
 

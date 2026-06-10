@@ -1,0 +1,629 @@
+---
+title: "Análisis de Accesibilidad: Polígonos de VORONOI"
+author: "Gisarte"
+date: "`r Sys.Date()`"
+format: html
+params:
+  aoi: "Erandio"
+  year: 2026
+  variable: "no2"
+  medida: "ecostress"
+---
+
+## Librerias
+
+```{r 110-setup}
+
+#| include: false
+#| message: false
+#| warning: false
+#| 
+library(readxl)
+library(tidyverse)
+library(sf)
+library(sfarrow) ## para guardar como geoparquet
+
+
+library(terra)
+library(tidyterra)
+library(lubridate)
+library(patchwork)  
+
+library(mapview)
+library(here)
+
+library(leaflet)
+library(leaflet.extras)
+library(htmlwidgets)
+library(htmltools)
+
+#library(maptiles)
+#library(tidyterra)
+
+
+```
+
+## Fijar rutas
+
+```{r 110_data_path}
+LST_path <- here("../../10_data/geodata/2026_Erandio/ecostress/LST//")
+QC_path <- here("../../10_data/geodata/2026_Erandio/ecostress/QC//")
+cloud_path <- here("../../10_data/geodata/2026_Erandio/ecostress/CLOUD//")
+```
+
+```{r 110_path_process}
+path_process <- here(paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/",
+                       params$medida,
+                       "//"))
+```
+
+Crear directorio
+
+```{r 110_dir_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_process,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+## Cargar datos
+
+Seleccionar la fecha y hora
+
+```{r}
+# Lista de tus archivos LST de julio 2025 (ejemplo con los nombres)
+lst_list <- list.files(LST_path,
+                  pattern = "*.tif$",
+                  full.names = T)
+```
+
+```{r}
+# Función para convertir hora UTC a hora local con formato AM/PM
+convertir_hora_local <- function(archivo, diferencia_horaria = 2) {  # UTC+2 para España verano
+  # Extraer hora UTC del nombre (formato: 20250722T155441)
+  hora_utc_str <- str_extract(basename(archivo), "\\d{8}T(\\d{6})")  |> 
+    str_extract("\\d{6}$")
+  
+  if (is.na(hora_utc_str)) return(NA_character_)
+  
+  # Convertir a horas, minutos, segundos
+  hora_utc <- as.numeric(str_sub(hora_utc_str, 1, 2))
+  minuto <- as.numeric(str_sub(hora_utc_str, 3, 4))
+  segundo <- as.numeric(str_sub(hora_utc_str, 5, 6))
+  
+  # Crear objeto datetime UTC
+  fecha_utc <- str_extract(basename(archivo), "\\d{8}")  |>  ymd()
+  datetime_utc <- fecha_utc + hours(hora_utc) + minutes(minuto) + seconds(segundo)
+  
+  # Convertir a hora local (sumar diferencia horaria)
+  datetime_local <- datetime_utc + hours(diferencia_horaria)
+  
+  # Formatear a "11:14 PM"
+  hora_local_formateada <- format(datetime_local, "%H:%M")  |> 
+    str_trim()  |> 
+    str_replace("^0", "")  # Eliminar el cero inicial (01:14 PM -> 1:14 PM)
+  
+  return(hora_local_formateada)
+}
+
+
+```
+
+```{r}
+# Crear un dataframe con nombres (solo el archivo, sin ruta), fechas y horas locales
+df_archivos <- tibble(
+  nombre = basename(lst_list),  # <--- SOLO EL NOMBRE DEL ARCHIVO
+  fecha = str_extract(nombre, "\\d{8}")  |>  
+    ymd(),
+  hora_local = map_chr(lst_list, convertir_hora_local, diferencia_horaria = 2)
+)
+
+
+```
+
+## Selección día
+
+Hay que elegir la fecha de la imegen que se va a analizar.
+
+```{r}
+# Usamos slice(1) por si acaso hubiera más de una pasada el mismo día
+info_dia1 <- df_archivos |> 
+  filter(fecha == "2025-07-22") |> 
+  slice(1)
+```
+
+```{r}
+# 2. Reconstruimos los patrones de búsqueda para QC y CLOUD basados en el archivo LST
+# Tus archivos contienen un identificador único de fecha_hora: 20250722T155441
+id_fecha_hora <- str_extract(info_dia1$nombre, "\\d{8}T\\d{6}")
+```
+
+3.  Buscamos los archivos correspondientes en sus respectivas carpetas
+
+```{r}
+# 3. Buscamos los archivos correspondientes en sus respectivas carpetas
+archivo_lst   <- list.files(LST_path,   
+                            pattern = paste0(id_fecha_hora, ".*\\.tif$"), 
+                            full.names = TRUE)
+
+
+archivo_qc    <- list.files(QC_path,
+                            pattern = paste0(id_fecha_hora, ".*\\.tif$"), 
+                            full.names = TRUE)
+
+
+archivo_cloud <- list.files(cloud_path, 
+                            pattern = paste0(id_fecha_hora, ".*\\.tif$"), 
+                            full.names = TRUE)
+
+#
+```
+
+```{r}
+# 4. Construimos el objeto final tal y como lo espera el flujo de ARSET
+lstday1 <- list(
+  lst   = archivo_lst,
+  qc    = archivo_qc,
+  cloud = archivo_cloud,
+  label = paste0("Jul ", day(info_dia1$fecha), ", ", info_dia1$hora_local),
+  date  = info_dia1$fecha
+)
+```
+
+## Función de procesado
+
+- Carga el archivo de temperatura y se queda solo con la primera banda (\[\[1\]\]).
+
+Los archivos L2T de ECOSTRESS traen dos capas por defecto: la banda 1 es la temperatura de la superficie (LST) y la banda 2 es el mapa de error estimado. Como solo nos interesa el valor de la temperatura, descartamos la segunda banda.
+
+- Resta 273.15 a cada píxel.
+
+Los satélites miden la temperatura en Kelvin (K) por estándar científico internacional. Para poder analizarlo de forma intuitiva, lo convertimos a grados Celsius (°C).
+
+No hace falta multiplicar por ningún factor de escala (como 0.02), ya que el producto L2T ya viene decodificado en valores flotantes reales.
+
+- Aplica una operación matemática de residuo (módulo 4) sobre la capa de Control de Calidad.
+
+  **qc_bits01 \<- qc %% 4**
+
+El archivo QC almacena la calidad usando "bits". Los dos primeros bits (bits 0 y 1) definen el control de calidad obligatorio de la NASA. Al hacer el módulo 4 (%% 4), extraemos exclusivamente la información de esos dos bits. Los valores resultantes significan:
+
+0 = Calidad Excelente.
+
+1 = Calidad Buena.
+
+2 = Calidad Susceptible de tener errores.
+
+3 = Mala calidad (no usar).
+
+- Busca todos los píxeles donde el valor de calidad extraído sea igual o mayor que 2 (es decir, calidad regular o mala) y los "borra" de la capa de temperatura convirtiéndolos en NA.
+
+  **mask(lst_c, qc_bits01 \>= 2, maskvalues = TRUE)**
+
+Garantiza que no usemos datos con alta incertidumbre que falseen las estadísticas de la zona de análisis (aoi).
+
+- Busca los píxeles donde la capa de nubes sea mayor que 0 (lo que significa que hay presencia de nubes o sombras de nubes) y los elimina de la capa de temperatura.
+
+  **mask(lst_c, cloud \> 0, maskvalues = TRUE)**
+
+Evita que el frío de las nubes se confunda con el microclima terrestre.
+
+```{r}
+process_ecostress <- function(lst_path, qc_path, cloud_path) {
+  lst   <- rast(lst_path)[[1]]   # Band 1 = LST; Band 2 = LST_err — drop it
+  qc    <- rast(qc_path)
+  cloud <- rast(cloud_path)
+  
+  lst_c     <- lst - 273.15     # K → °C
+  qc_bits01 <- qc %% 4          # Extract bits 0–1 only
+  lst_c     <- mask(lst_c, qc_bits01 >= 2, maskvalues = TRUE)
+  lst_c     <- mask(lst_c, cloud > 0,      maskvalues = TRUE)
+  
+  return(lst_c)
+}
+```
+
+Procesar nuestra única imagen
+
+```{r}
+# Procesar nuestra única imagen de julio de 2025
+lst_final <- process_ecostress(lstday1$lst, lstday1$qc, lstday1$cloud)
+```
+
+```{r}
+plot(lst_final, col = hcl.colors(100, palette = "inferno"))
+
+
+```
+
+```{r}
+ggplot() +
+  geom_spatraster(data = lst_final) +
+  scale_fill_viridis_c(
+    option = "magma", 
+    na.value = "transparent",
+    name = "LST (°C)"
+  ) +
+  labs(
+    title = paste0("Temperatura de la Superficie Terrestre (LST) - ", params$aoi),
+    subtitle = lstday1$label,
+    caption = "Datos: ECOSTRESS L2T"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12),
+    plot.subtitle = element_text(color = "darkgray"),
+    panel.grid = element_blank() # Quita las líneas de coordenadas traseras
+  )
+```
+
+Control de cordura (Sanity check)
+
+```{r}
+# Control de cordura (Sanity check) para verificar los valores en Erandio
+message(sprintf("LST rango para Erandio (%s): %.1f°C to %.1f°C",
+                lstday1$label,
+                global(lst_final, "min", na.rm = TRUE)[[1]],
+                global(lst_final, "max", na.rm = TRUE)[[1]]))
+```
+
+## Cálculo de las ISLAS URBANAS DE CALOR (UHI)
+
+Se va a obtener es un **Mapa de Intensidad Relativa de la Isla de Calor** para la zona de estudio.
+
+la fórmula:
+
+$$UHI = \frac{LST_{píxel} - \text{media}(LST_{municipio})}{\text{desviación estándar}(LST_{municipio})}$$
+
+Lo que estás haciendo es cambiar la escala de grados Celsius a unidades de "desviación". El resultado se interpreta de forma muy intuitiva para el planeamiento urbano:
+
+- Valores \> 0 (Positivos): Son píxeles que están más calientes que la media de Erandio. Si un píxel da +2, significa que esa zona está críticamente caliente (dos desviaciones por encima del promedio). Ahí es donde se concentra la Isla de Calor.
+
+- Valores \< 0 (Negativos): Son zonas más frías que la media del municipio (parques, zonas rurales altas o la ría). Actúan como sumideros térmicos o "islas de frío".
+
+
+
+Calcular la media y la desviación estándar globales del mapa de Erandio
+
+```{r}
+stats_lst <- global(lst_final, 
+                    fun = c("mean", "sd"),
+                    na.rm = TRUE)
+```
+
+
+```{r}
+media_aoi <- stats_lst$mean
+sd_aoi    <- stats_lst$sd
+```
+
+
+Aplicar la fórmula de la NASA (Z-score) directamente sobre el ráster
+
+```{r}
+uhi_1 <- (lst_final - media_aoi) / sd_aoi
+```
+
+
+```{r}
+# 3. Control rápido en consola
+message(sprintf("Rango del índice UHI: %.2f a %.2f",
+                global(uhi_1, "min", na.rm = TRUE)[[1]],
+                global(uhi_1, "max", na.rm = TRUE)[[1]]))
+```
+
+
+
+```{r}
+ggplot() +
+  geom_spatraster(data = uhi_1) +
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0,
+    na.value = "transparent",
+    name = "Intensidad UHI\n(Z-score)"
+  ) +
+  labs(
+    title = paste0("Aproximación a la Isla de Calor Urbana (UHI) en ",params$aoi),
+    subtitle = paste0("Indexación relativa basada en la media municipal - ", lstday1$label),
+    caption = "Valores positivos representan anomalías de calor respecto al promedio total."
+  ) +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+```
+
+
+
+
+
+
+
+### Guardar capas raster
+
+```{r 110_guardar_lst_cog}
+#| warning: false
+
+# ==============================================================================
+# FASE 1: GUARDAR CAPA RASTER PARA LEAFLET EN FORMATO COG (Cloud Optimized GeoTIFF)
+# ==============================================================================
+
+# 1. Definimos la ruta de salida para el raster de visualización web
+ruta_cog_LST <- file.path(path_process, "LST_geo.tif")
+
+# 2. Exportamos aplicando los parámetros nativos de optimización COG
+terra::writeRaster(
+  x = lst_final,
+  filename = ruta_cog_LST,
+  overwrite = TRUE,
+  # ----------------------------------------------------------------------------
+  # CONFIGURACIÓN GDAL PARA COG:
+  # ----------------------------------------------------------------------------
+  gdal = c(
+    "DRIVER=COG",            # Fuerza a GDAL a maquetar el archivo como COG nativo
+    "COMPRESS=DEFLATE",      # Compresión sin pérdida ideal para mantener los datos de población
+    "LEVEL=9",               # Nivel máximo de compresión para que ocupe lo mínimo en web
+    "TILING=YES",            # Divide la imagen en azulejos internos (bloques)
+    "OVERVIEWS=AUTO"         # Genera automáticamente las pirámides de resolución para el zoom
+  )
+)
+
+```
+
+
+
+```{r 110_guardar_uhi_cog}
+#| warning: false
+
+# ==============================================================================
+# FASE 1: GUARDAR CAPA RASTER PARA LEAFLET EN FORMATO COG (Cloud Optimized GeoTIFF)
+# ==============================================================================
+
+# 1. Definimos la ruta de salida para el raster de visualización web
+ruta_cog_UHI <- file.path(path_process, "UHI_geo.tif")
+
+# 2. Exportamos aplicando los parámetros nativos de optimización COG
+terra::writeRaster(
+  x = uhi_1,
+  filename = ruta_cog_UHI,
+  overwrite = TRUE,
+  # ----------------------------------------------------------------------------
+  # CONFIGURACIÓN GDAL PARA COG:
+  # ----------------------------------------------------------------------------
+  gdal = c(
+    "DRIVER=COG",            # Fuerza a GDAL a maquetar el archivo como COG nativo
+    "COMPRESS=DEFLATE",      # Compresión sin pérdida ideal para mantener los datos de población
+    "LEVEL=9",               # Nivel máximo de compresión para que ocupe lo mínimo en web
+    "TILING=YES",            # Divide la imagen en azulejos internos (bloques)
+    "OVERVIEWS=AUTO"         # Genera automáticamente las pirámides de resolución para el zoom
+  )
+)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r 110_cargar_aoi_gpkg}
+# 1. Definimos la ruta al archivo GeoPackage de medidas
+ruta_gpkg <- file.path(path_process, "medidas_NO2.gpkg")
+# ruta_parquet <-  file.path(path_process, "geoparquet/aoi.parquet")
+
+# 2. Leemos la capa "aoi" de forma limpia y silenciosa
+aoi <- st_read(ruta_gpkg, layer = "aoi", quiet = TRUE)
+
+
+
+# mapview(aoi)
+```
+
+Los datos de las mediciones de NO2.
+
+```{r 110_ruta_gpkg}
+
+ruta_gpkg <- file.path(path_process, "medidas_NO2.gpkg")
+
+# Cargamos Erandio (AOI) y la capa ya geográfica que preparaste
+
+# aoi <- st_read(ruta_gpkg, layer = "aoi", quiet = TRUE)
+
+no2 <- st_read(ruta_gpkg, layer = "NO2_exterior_4326", quiet = TRUE)
+
+mapview(no2)
+
+```
+
+## Poligonos de VORONOI
+
+Necesitamos en UTM para que las distancias sean correctas
+
+```{r}
+no2_utm <- no2 |> 
+  st_transform(25830)
+```
+
+```{r}
+union_no2 <- st_union(no2_utm)
+```
+
+```{r}
+voronoi_grid_NO2 <- st_voronoi(union_no2)
+```
+
+```{r}
+voronoi_sf <- st_collection_extract(voronoi_grid_NO2)  |> 
+  st_sf()  |> 
+  st_intersection(st_transform(aoi, 25830)) |> 
+  st_join(no2_utm, join = st_contains)
+
+
+```
+
+```{r}
+mapview(voronoi_sf)
+```
+
+```{r}
+# mapview w list of objects
+mapview(list(aoi, voronoi_sf),
+        zcol = list(NULL, "Clase"),
+        legend = list(TRUE, TRUE),
+        homebutton = list(FALSE, TRUE))
+```
+
+## Guardar las capas
+
+### Guardar GPKG
+
+Guardar UTM
+
+```{r 110_rutasgpkg}
+# 1. Definimos las rutas absolutas para tus dos GeoPackages
+ruta_gpkg_voronoi <- file.path(path_process, "voronoi.gpkg")
+
+```
+
+```{r 110_geometrias}
+# --- PREPARACIÓN DE GEOMETRÍAS ---
+# Versión UTM original (métrica)
+voronoi_utm <- voronoi_sf |> 
+  sf::st_transform(crs = 25830)
+
+
+# Versión Geográfica (grados) para Leaflet
+voronoi_geo <- voronoi_sf |> 
+  sf::st_transform(crs = 4326)
+```
+
+```{r 110_saveGpkg_utm}
+sf::st_write(
+  voronoi_utm,
+  dsn = ruta_gpkg_voronoi,
+  layer = "voronoi_utm",      # Nombre de la primera capa
+  delete_layer = TRUE,        # Si ya existe esta capa, la sobrescribe
+  quiet = TRUE
+)
+```
+
+Guardar Geográficas
+
+```{r 110_saveGpkg_geo}
+# Guardamos la capa GEO en el mismo archivo físico
+sf::st_write(
+  voronoi_geo,
+  dsn = ruta_gpkg_voronoi,
+  layer = "voronoi_geo",      # Nombre de la segunda capa
+  delete_layer = TRUE,        # Sobrescribe solo esta capa si ya existía
+  quiet = TRUE
+)
+```
+
+### Guardar parquet
+
+Creamos el folder geoparquet
+
+```{r}
+path_parquet <- here(paste0(path_process, "geoparquet//"))
+```
+
+```{r 110_dir_parquet_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_parquet,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+```{r 110_remove_parqueto}
+#| warning: false
+#| message: false
+
+
+# --- 0. LIMPIEZA AUTOMÁTICA DE PARQUETS ANTIGUOS ---
+# Buscamos todos los archivos en "path_process" que contengan la palabra "isocrona" y terminen en .parquet
+archivos_antiguos <- list.files(
+  path = path_parquet, 
+  pattern = "buffer.*\\.parquet$",
+  full.names = TRUE
+)
+
+# Si encuentra archivos, los borra del disco de un plumazo
+#if (length(archivos_antiguos_buff) > 0) {
+#  file.remove(archivos_antiguos_buff)
+#}
+
+
+
+```
+
+GUARDAR PolÍgonops de VORONOI
+
+```{r 110_guardar_buffers_parquet}
+#| warning: false
+#| message: false
+# 
+suppressWarnings({
+  sfarrow::st_write_parquet(voronoi_geo,
+                            file.path(path_parquet, "voronoi_geo.parquet"))
+  
+  
+  
+  
+  sfarrow::st_write_parquet(voronoi_utm,
+                            file.path(path_parquet, "voronoi_utm.parquet"))
+})
+```
+
+```{r}
+
+```

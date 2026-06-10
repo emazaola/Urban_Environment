@@ -9,11 +9,11 @@ params:
   variable: "no2"
 ---
 
-## librerias
+## Librerias
 
 
 
-```{r 20-setup}
+```{r 204-setup}
 
 #| include: false
 #| message: false

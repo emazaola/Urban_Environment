@@ -19,6 +19,8 @@ book:
          - 102-POPulation.qmd
          - 103-red_vial.qmd
          - 104-elevacion_dem.qmd
+         - 105-contours.qmd
+         - 110-LST-Ecostress.qmd
 #        - 100-_Divisiones Euskadi.qmd
 
     - part: "CONTAMINACIÓN NO2"
