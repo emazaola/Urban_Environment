@@ -1,0 +1,312 @@
+---
+title: "HIDROGRAFÍA"
+params:
+  params:
+  aoi: "Erandio"
+  year: 2026
+  variable: "no2"
+---
+
+
+## HIDROGRAFÍA con WHITHEBOX
+
+A partir del DEM calculado anteriormente, los siguientes paos son:
+
+-   Eliminar picos y sumideros del DEM
+
+-   Calcular orientaciones, mapas de sombras y pendientes
+
+-   Calcular curvas de nivel
+
+-   Calcular sub-cuencas
+
+-   En hidrografía: red de drenaje, índice topográfico de humedad
+
+
+
+```{r setup, include=FALSE}
+# Cargar Librerías
+
+library(terra)
+library(sf)
+library(tidyverse)
+
+
+library(here)
+
+#install.packages("whitebox")
+library(whitebox)
+whitebox::wbt_init() 
+
+# para asegurar que terra funcione bien
+prj <- system.file("proj", package = "terra")[1]
+Sys.setenv(PROJ_LIB = prj)
+Sys.setenv(PROJ_DATA = prj)
+```
+
+### Datos de partida
+
+Se parte del DEM calculado antes.
+
+```{r 106_paths}
+path_dem <- paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/",
+                       "DEM/")
+
+path_output <- paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/",
+                       "WTB/")
+  
+
+```
+
+
+Crear directorio
+
+```{r 106__dir_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_output,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+```{r}
+#| message: false
+wbt_fill_depressions(
+  dem = here(paste0(path_dem, "dem.tif")),
+  output = here(paste0(path_output,"dem_filled.tif"))
+)
+```
+
+
+
+```{r}
+#| message: false
+wbt_breach_depressions_least_cost(
+  dem = here(paste0(path_dem, "dem.tif")),
+  output = here(paste0(path_output,"dem_breached.tif")),
+  dist = 5,
+  fill = TRUE)
+
+```
+
+```{r}
+dem_hydro <- here(paste0(path_output,"dem_breached.tif"))
+```
+
+### Dirección de Flujo D8
+
+
+```{r}
+#| message: false
+wbt_d8_pointer(
+  dem = dem_hydro,
+  output = here(paste0(path_output,"flow_dir.tif"))
+)
+```
+
+### Acumulación de flujo
+
+Para TWI es mejor usar **specific contributing area**.
+
+```{r}
+#| message: false
+wbt_d8_flow_accumulation(
+  input = dem_hydro,
+  output = here(paste0(path_output,"flow_acc.tif")),
+  out_type = "specific contributing area"
+)
+```
+
+### Red de Drenaje
+
+Umbral depende del tamaño de cuenca. 
+Ajustar threshold según área mínima deseada.
+
+```{r}
+#| message: false
+wbt_extract_streams(
+  flow_accum = here(paste0(path_output,"flow_acc.tif")),
+  output = here(paste0(path_output,"streams.tif")),
+  threshold = 1000
+)
+```
+
+### Pendiente
+
+Para calcular el **TWI** debe estar en radianes.
+
+```{r}
+#| message: false
+dem <- rast(dem_hydro)
+
+slope <- terrain(dem, "slope", unit="radians")
+
+writeRaster(
+  slope,
+  here(paste0(path_output,"slope.tif")),
+  overwrite=TRUE
+)
+```
+
+### Índice Topográfico de Humedad (TWI)
+
+```{r}
+wbt_wetness_index(
+  sca = here(paste0(path_output,"flow_acc.tif")),
+  slope = here(paste0(path_output,"slope.tif")),
+  output = here(paste0(path_output,"twi.tif"))
+)
+```
+
+### Orientación
+
+```{r}
+aspect <- terrain(dem, "aspect", unit="degrees")
+
+writeRaster(
+  aspect,
+  here(paste0(path_output,"aspect.tif")),
+  overwrite=TRUE
+)
+```
+
+
+```{r}
+# dem_hydro   <- here(paste0(path_output,"dem_breached.tif"))
+flow_acc    <- here(paste0(path_output,"flow_acc.tif"))
+flow_dir    <- here(paste0(path_output,"flow_dir.tif"))
+slope_rad   <- here(paste0(path_output,"slope.tif"))
+streams_ras <- here(paste0(path_output,"streams.tif"))
+```
+
+### SPI — Stream Power Index
+
+El Stream Power Index (SPI) estima la capacidad erosiva potencial del flujo superficial.
+
+Relaciona:
+- Cantidad de agua acumulada
+- Pendiente del terreno
+
+
+Interpretación:
+- Valores altos → incisión activa
+- Valores bajos → zonas estables
+
+
+
+```{r}
+wbt_stream_power_index(
+  sca = flow_acc,
+  slope = slope_rad,
+  output = here(paste0(path_output,"spi.tif"))
+)
+```
+
+
+### LS Factor (RUSLE)
+
+LS Factor (Factor Longitud–Pendiente) viene del modelo RUSLE (erosión hídrica).
+
+📌 Mide el efecto combinado de:
+- Longitud de pendiente
+- Inclinación
+
+Sobre la erosión potencial.
+
+Interpretación:
+
+- Valores altos → mayor potencial de erosión hídrica
+- Muy útil si luego integras con K, C y R
+
+Muy usado en:
+
+- Modelos de pérdida de suelo
+- Estudios agrícolas
+- Evaluación ambiental
+
+
+```{r}
+ls("package:whitebox", pattern = "ls")
+```
+
+```{r}
+#  wbt_tool_help("LSFactor")
+```
+
+
+
+```{r}
+# wbt_ls_factor(
+#   dem = dem_hydro,
+#   output = here(paste0(path_output,"ls_factor.tif"))
+# )
+```
+
+
+
+### Orden de Strahler
+
+Clasifica jerárquicamente la red.
+
+Concepto: 
+- Dos arroyos de orden 1 → generan orden 2
+- Dos de orden 2 → generan orden 3
+- Si confluyen distinto orden → mantiene el mayor
+
+¿Para qué sirve?
+- Jerarquizar red
+- Analizar estructura fluvial
+- Modelos hidrológicos
+- Estudios de conectividad
+
+```{r}
+wbt_strahler_stream_order(
+  d8_pntr = flow_dir,
+  streams = streams_ras,
+  output = here(paste0(path_output,"stream_order.tif"))
+)
+```
+
+
+```{r}
+wbt_raster_streams_to_vector(
+  streams = here(paste0(path_output,"stream_order.tif")),
+  d8_pntr = flow_dir,
+  output = here(paste0(path_output,"streams_order.shp"))
+)
+```
+
+```{r}
+streams_order <- vect(here(paste0(path_output,"streams_order.shp")))
+```
+
+```{r}
+crs(streams_order)
+```
+
+
+
+```{r}
+streams_order_utm <- set.crs(streams_order, crs(dem))
+streams_order_utm
+```
+
+
+```{r}
+writeVector(streams_order_utm, 
+            here(paste0(path_output, "streams_order.gpkg")), 
+            filetype = "GPKG", 
+            overwrite = TRUE)
+```
+

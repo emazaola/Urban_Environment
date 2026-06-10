@@ -173,7 +173,7 @@ mapview(list(aoi, educ_polygons),
 
 
 
-### Guardar las capas
+### Guardar Escuelas
 
 #### Guardar GPKG
 
@@ -231,7 +231,7 @@ sf::st_write(
 
 Guardar Geográficas
 
-```{r 204_saveGpkg_geo}
+```{r 101_saveGpkg_geo}
 # Guardamos la capa GEO en el mismo archivo físico
 
 sf::st_write(
@@ -265,7 +265,7 @@ path_parquet <- here(paste0(path_process, "geoparquet//"))
 ```
 
 
-```{r 204_dir_parquet_create}
+```{r 101_dir_parquet_create}
 #Crear carpeta si no existe
 
 dir.create(
@@ -276,7 +276,7 @@ dir.create(
 ```
 
 
-```{r 204_remove_parqueto}
+```{r 101_remove_parqueto}
 #| warning: false
 #| message: false
 
@@ -423,6 +423,99 @@ mapview(viviendas_osm)+
 plot(viviendas)
 ```
 
+
+### Guardar Edificios
+
+#### Guardar GPKG
+
+Guardar UTM
+  
+```{r 101_rutas-viviendas}
+ruta_gpkg_viviendas <- file.path(path_process, "viviendas.gpkg")
+```
+
+
+
+```{r 101_geometrias}
+# --- PREPARACIÓN DE GEOMETRÍAS ---
+# Versión UTM original (métrica)
+viviendas_utm <- viviendas |> 
+  sf::st_transform(crs = 25830)
+
+#####--------------------------------------------
+
+# Versión Geográfica (grados) para Leaflet
+viviendas_geo <- viviendas |> 
+  sf::st_transform(crs = 4326)
+
+```
+
+
+```{r 101_saveviviendas_utm}
+sf::st_write(
+  escuelas_utm,
+  dsn = ruta_gpkg_viviendas,
+  layer = "viviendas_utm",      # Nombre de la primera capa
+  delete_layer = TRUE,        # Si ya existe esta capa, la sobrescribe
+  quiet = TRUE
+)
+#####--------------------------------------------
+
+```
+
+
+Guardar Geográficas
+
+```{r 101_saveviviendasg_geo}
+# Guardamos la capa GEO en el mismo archivo físico
+
+sf::st_write(
+  viviendas_geo,
+  dsn = ruta_gpkg_viviendas,
+  layer = "viviendas_geo",      # Nombre de la segunda capa
+  delete_layer = TRUE,        # Sobrescribe solo esta capa si ya existía
+  quiet = TRUE
+)
+```
+
+
+
+#### Guardar parquet
+
+
+```{r 101_remove_parqueto}
+#| warning: false
+#| message: false
+
+
+# --- 0. LIMPIEZA AUTOMÁTICA DE PARQUETS ANTIGUOS ---
+# Buscamos todos los archivos en "path_process" que contengan la palabra "isocrona" y terminen en .parquet
+archivos_antiguos <- list.files(
+  path = path_parquet, 
+  pattern = "viviendas.*\\.parquet$",
+  full.names = TRUE
+)
+```
+
+
+```{r 101_guardar_buffers_parquet}
+#| warning: false
+#| message: false
+# 
+
+# 
+suppressWarnings({
+  sfarrow::st_write_parquet(viviendas_geo,
+                            file.path(path_parquet, "viviendas_geo.parquet"))
+  
+  
+  
+  
+  sfarrow::st_write_parquet(escuelas_utm,
+                            file.path(path_parquet, "viviendas_utm.parquet"))
+})
+
+```
 
 
 

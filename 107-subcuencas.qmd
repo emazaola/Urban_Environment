@@ -1,0 +1,362 @@
+---
+title: "HIDROGRAFÍA"
+params:
+  aoi: "DANA"
+  country: "Spain"
+  year: 2019
+  start_date: "2023-07-15"
+  end_date: "2023-08-15"
+  region: "Valencia"
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+
+## SUBCUENCAS HIDROGRÁFICAS
+
+A partir del DEM corregido  calculado anteriormente, los siguientes paos son:
+
+-   xxxxxxx
+
+
+
+```{r setup, include=FALSE}
+# Cargar Librerías
+
+library(terra)
+library(sf)
+library(tidyverse)
+
+
+library(here)
+
+#install.packages("whitebox")
+library(whitebox)
+whitebox::wbt_init() 
+
+# para asegurar que terra funcione bien
+prj <- system.file("proj", package = "terra")[1]
+Sys.setenv(PROJ_LIB = prj)
+Sys.setenv(PROJ_DATA = prj)
+```
+
+### Datos de partida
+
+Se parte del DEM calculado antes.
+
+```{r}
+path_dem <- "../../02_process/geoprocess/DEM/"
+
+path_wtb <- "../../02_process/geoprocess/WTB/"
+
+path_output <- "../../02_process/geoprocess/watersheeds/"
+```
+
+
+
+
+
+```{r}
+dem_hydro   <- here(paste0(path_wtb,"dem_breached.tif"))
+flow_acc    <- here(paste0(path_wtb,"flow_acc.tif"))
+flow_dir    <- here(paste0(path_wtb,"flow_dir.tif"))
+slope_rad   <- here(paste0(path_wtb,"slope.tif"))
+streams_ras <- here(paste0(path_wtb,"streams.tif"))
+```
+
+
+
+
+
+
+
+
+## Área de trabajo
+
+El tamaño mínimo de cuenca lo controla en el umbral de extracción de la red (wbt_extract_streams).
+
+📊 ¿Cómo elegir un número manejable?
+
+Depende de la escala de trabajo:
+
+Escala estudio	Área mínima recomendada
+Local (< 5 km²)	1–5 ha
+Municipal	5–20 ha
+Comarcal	20–100 ha
+Regional	> 100 ha
+
+Nº total de celdas
+
+```{r}
+dem_hydro <- rast(dem_hydro)
+ncell(dem_hydro)
+```
+
+área de una celda
+```{r}
+area <- res(dem_hydro)
+
+area_celda <- area[1]* area[2]
+area_celda
+```
+
+#### Para 5 hectareas
+
+```{r}
+threshold = 5 * 10000/area_celda
+threshold
+```
+
+```{r}
+wbt_extract_streams(
+  flow_accum = flow_acc,
+  output = here(paste0(path_output,"streams_5ha.tif")),
+  threshold = threshold
+)
+```
+
+
+```{r}
+wbt(
+  tool_name = "Subbasins",
+  d8_pntr = flow_dir,
+  streams = here(paste0(path_output,"streams_5ha.tif")),
+  output = here(paste0(path_output,"subbasins_5ha.tif"))
+)
+```
+
+
+```{r}
+wbt_raster_to_vector_polygons(
+  input = here(paste0(path_output,"subbasins_5ha.tif")),
+  output = here(paste0(path_output,"subbasins_5ha.shp"))
+)
+```
+
+
+
+```{r}
+wbt_strahler_stream_order(
+  d8_pntr = flow_dir,
+  streams = here(paste0(path_output,"streams_5ha.tif")),
+  output = here(paste0(path_output,"stream_order_5ha.tif"))
+)
+```
+
+
+
+```{r}
+wbt_raster_streams_to_vector(
+  streams = here(paste0(path_output,"stream_order_5ha.tif")),
+  d8_pntr = flow_dir,
+  output = here(paste0(path_output,"stream_order_5ha.shp"))
+)
+```
+
+
+#### Para 10 hectareas
+
+```{r}
+threshold = 10 * 10000/area_celda
+threshold
+```
+
+```{r}
+wbt_extract_streams(
+  flow_accum = flow_acc,
+  output = here(paste0(path_output,"streams_10ha.tif")),
+  threshold = threshold
+)
+```
+
+
+```{r}
+wbt(
+  tool_name = "Subbasins",
+  d8_pntr = flow_dir,
+  streams = here(paste0(path_output,"streams_10ha.tif")),
+  output = here(paste0(path_output,"subbasins_10ha.tif"))
+)
+```
+
+
+```{r}
+wbt_raster_to_vector_polygons(
+  input = here(paste0(path_output,"subbasins_10ha.tif")),
+  output = here(paste0(path_output,"subbasins_10ha.shp"))
+)
+```
+
+
+
+#### Para 25 hectareas
+
+```{r}
+threshold = 25 * 10000/area_celda
+threshold
+```
+
+```{r}
+wbt_extract_streams(
+  flow_accum = flow_acc,
+  output = here(paste0(path_output,"streams_25ha.tif")),
+  threshold = threshold
+)
+```
+
+
+```{r}
+wbt(
+  tool_name = "Subbasins",
+  d8_pntr = flow_dir,
+  streams = here(paste0(path_output,"streams_25ha.tif")),
+  output = here(paste0(path_output,"subbasins_25ha.tif"))
+)
+```
+
+
+```{r}
+wbt_raster_to_vector_polygons(
+  input = here(paste0(path_output,"subbasins_25ha.tif")),
+  output = here(paste0(path_output,"subbasins_25ha.shp"))
+)
+```
+
+
+#### Para 100 hectareas
+
+```{r}
+threshold = 100 * 10000/area_celda
+threshold
+```
+
+```{r}
+wbt_extract_streams(
+  flow_accum = flow_acc,
+  output = here(paste0(path_output,"streams_100ha.tif")),
+  threshold = threshold
+)
+```
+
+
+```{r}
+wbt(
+  tool_name = "Subbasins",
+  d8_pntr = flow_dir,
+  streams = here(paste0(path_output,"streams_100ha.tif")),
+  output = here(paste0(path_output,"subbasins_100ha.tif"))
+)
+```
+
+
+```{r}
+wbt_raster_to_vector_polygons(
+  input = here(paste0(path_output,"subbasins_100ha.tif")),
+  output = here(paste0(path_output,"subbasins_100ha.shp"))
+)
+```
+
+
+
+#### Para 500 hectareas
+
+```{r}
+threshold = 500 * 10000/area_celda
+threshold
+```
+
+```{r}
+wbt_extract_streams(
+  flow_accum = flow_acc,
+  output = here(paste0(path_output,"streams_500ha.tif")),
+  threshold = threshold
+)
+```
+
+
+```{r}
+wbt(
+  tool_name = "Subbasins",
+  d8_pntr = flow_dir,
+  streams = here(paste0(path_output,"streams_500ha.tif")),
+  output = here(paste0(path_output,"subbasins_500ha.tif"))
+)
+```
+
+
+```{r}
+wbt_raster_to_vector_polygons(
+  input = here(paste0(path_output,"subbasins_500ha.tif")),
+  output = here(paste0(path_output,"subbasins_500ha.shp"))
+)
+```
+
+
+
+
+
+
+
+#### Área total
+
+```{r}
+wbt(
+  tool_name = "Subbasins",
+  d8_pntr = flow_dir,
+  streams = streams_ras,
+  output = here(paste0(path_output,"subbasins.tif"))
+)
+```
+
+```{r}
+wbt_raster_to_vector_polygons(
+  input = here(paste0(path_output,"subbasins.tif")),
+  output = here(paste0(path_output,"subbasins.shp"))
+)
+```
+
+
+```{r}
+subbasins <- vect(here(paste0(path_output,"subbasins.shp")))
+```
+
+
+
+```{r}
+gpkg_path <- here(paste0(path_output, "subbasins.gpkg"))
+
+if (file.exists(gpkg_path)) {
+  file.remove(gpkg_path)
+}
+
+writeVector(
+  subbasins,
+  gpkg_path,
+  filetype = "GPKG",
+  overwrite = TRUE
+)
+```
+
+  
+  
+  
+  
+```{r}
+subbasins <- st_read(here(paste0(path_output,"subbasins.shp")))
+```
+
+
+```{r}
+write_sf(
+  subbasins, 
+   here(paste0(path_output, "subbasins.gpkg")),
+  append = FALSE
+)
+```
+
+
+
+
+
+

@@ -20,6 +20,8 @@ book:
          - 103-red_vial.qmd
          - 104-elevacion_dem.qmd
          - 105-contours.qmd
+         - 106-hidro.qmd
+         - 107-subcuencas.qmd
          - 110-LST-Ecostress.qmd
 #        - 100-_Divisiones Euskadi.qmd
 
