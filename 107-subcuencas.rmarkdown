@@ -1,0 +1,657 @@
+---
+title: "HIDROGRAFÍA"
+params:
+  aoi: "Erandio"
+  year: 2026
+  variable: "no2"
+---
+
+
+## SUBCUENCAS HIDROGRÁFICAS
+
+A partir del DEM corregido  calculado anteriormente, los siguientes paos son:
+
+-   xxxxxxx
+
+
+
+```{r 107-setup, include=FALSE}
+# Cargar Librerías
+
+library(terra)
+library(sf)
+library(tidyverse)
+
+library(sfarrow)
+
+
+library(here)
+
+#install.packages("whitebox")
+library(whitebox)
+whitebox::wbt_init() 
+
+# para asegurar que terra funcione bien
+prj <- system.file("proj", package = "terra")[1]
+Sys.setenv(PROJ_LIB = prj)
+Sys.setenv(PROJ_DATA = prj)
+```
+
+### Datos de partida
+
+Se parte del DEM calculado antes.
+
+```{r 107_paths}
+path_dem <- paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/",
+                       "DEM/")
+
+path_wtb <- paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/",
+                       "WTB/")
+
+
+path_output <- paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/",
+                       "watersheeds/")
+  
+
+```
+
+
+
+Crear directorio
+
+```{r 107__dir_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_output,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+```{r}
+dem_hydro   <- here(paste0(path_wtb,"dem_breached.tif"))
+flow_acc    <- here(paste0(path_wtb,"flow_acc.tif"))
+flow_dir    <- here(paste0(path_wtb,"flow_dir.tif"))
+slope_rad   <- here(paste0(path_wtb,"slope.tif"))
+streams_ras <- here(paste0(path_wtb,"streams.tif"))
+```
+
+
+
+
+
+## Área de trabajo
+
+El tamaño mínimo de cuenca lo controla en el umbral de extracción de la red (wbt_extract_streams).
+
+📊 ¿Cómo elegir un número manejable?
+
+Depende de la escala de trabajo:
+
+Escala estudio	Área mínima recomendada
+Local (< 5 km²)	1–5 ha
+Municipal	5–20 ha
+Comarcal	20–100 ha
+Regional	> 100 ha
+
+Nº total de celdas
+
+```{r}
+dem_hydro <- rast(dem_hydro)
+ncell(dem_hydro)
+```
+
+área de una celda
+```{r}
+area <- res(dem_hydro)
+
+area_celda <- area[1]* area[2]
+area_celda
+```
+
+#### Para 5 hectareas
+
+```{r}
+threshold = 5 * 10000/area_celda
+threshold
+```
+
+```{r}
+wbt_extract_streams(
+  flow_accum = flow_acc,
+  output = here(paste0(path_output,"streams_5ha.tif")),
+  threshold = threshold
+)
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+wbt(
+  tool_name = "Subbasins",
+  d8_pntr = flow_dir,
+  streams = here(paste0(path_output,"streams_5ha.tif")),
+  output = here(paste0(path_output,"subbasins_5ha.tif"))
+)
+```
+
+
+```{r} 
+#| warning: false
+#| message: false
+#| 
+wbt_raster_to_vector_polygons(
+  input = here(paste0(path_output,"subbasins_5ha.tif")),
+  output = here(paste0(path_output,"subbasins_5ha.shp"))
+)
+```
+
+=====================================================================
+
+
+```{r}
+# 2. Leer el Shapefile recién creado en R
+subbasins_5ha <- read_sf(here(paste0(path_output, "subbasins_5ha.shp"))) |> 
+  select(c("VALUE" ,   "geometry"))
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+sf::st_write(
+  obj = subbasins_5ha,
+  dsn = here(paste0(path_output, "subbasins_5ha.gpkg")),
+  driver = "gpkg",
+  delete_dsn = TRUE # Equivalente a append = FALSE para sobrescribir
+)
+```
+
+Eliminar el shp
+
+```{r}
+#| warning: false
+#| message: false
+
+# Ruta completa al archivo .shp principal
+archivo_shp <- here(paste0(path_output, "subbasins_5ha.shp"))
+
+# st_delete se encarga de borrar el .shp y TODOS sus archivos asociados (.dbf, .shx, .prj...)
+sf::st_delete(archivo_shp)
+```
+
+=====================================================================
+
+
+```{r}
+#| warning: false
+#| message: false
+
+wbt_strahler_stream_order(
+  d8_pntr = flow_dir,
+  streams = here(paste0(path_output,"streams_5ha.tif")),
+  output = here(paste0(path_output,"stream_order_5ha.tif"))
+)
+```
+
+
+
+```{r}
+#| warning: false
+#| message: false
+
+
+wbt_raster_streams_to_vector(
+  streams = here(paste0(path_output,"stream_order_5ha.tif")),
+  d8_pntr = flow_dir,
+  output = here(paste0(path_output,"stream_order_5ha.shp"))
+)
+```
+
+=====================================================================
+
+
+```{r}
+# 2. Leer el Shapefile recién creado en R
+stream_order_5ha <- read_sf(here(paste0(path_output, "stream_order_5ha.shp"))) |> 
+  select(c("STRM_VAL" ,   "geometry"))
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+sf::st_write(
+  obj = stream_order_5ha,
+  dsn = here(paste0(path_output, "stream_order_5ha.gpkg")),
+  driver = "gpkg",
+  delete_dsn = TRUE # Equivalente a append = FALSE para sobrescribir
+)
+```
+
+Eliminar el shp
+
+```{r}
+#| warning: false
+#| message: false
+
+# Ruta completa al archivo .shp principal
+archivo_shp <- here(paste0(path_output, "stream_order_5ha.shp"))
+
+# st_delete se encarga de borrar el .shp y TODOS sus archivos asociados (.dbf, .shx, .prj...)
+sf::st_delete(archivo_shp)
+```
+
+=====================================================================
+
+#### Para 10 hectareas
+
+```{r}
+#| warning: false
+#| message: false
+
+threshold = 10 * 10000/area_celda
+threshold
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+wbt_extract_streams(
+  flow_accum = flow_acc,
+  output = here(paste0(path_output,"streams_10ha.tif")),
+  threshold = threshold
+)
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+wbt(
+  tool_name = "Subbasins",
+  d8_pntr = flow_dir,
+  streams = here(paste0(path_output,"streams_10ha.tif")),
+  output = here(paste0(path_output,"subbasins_10ha.tif"))
+)
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+wbt_raster_to_vector_polygons(
+  input = here(paste0(path_output,"subbasins_10ha.tif")),
+  output = here(paste0(path_output,"subbasins_10ha.shp"))
+)
+```
+
+
+=====================================================================
+
+
+```{r}
+# 2. Leer el Shapefile recién creado en R
+subbasins_10ha_sf <- read_sf(here(paste0(path_output, "subbasins_10ha.shp"))) |> 
+  select(c("VALUE" ,   "geometry"))
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+sf::st_write(
+  obj = subbasins_10ha_sf,
+  dsn = here(paste0(path_output, "subbasins_10ha.gpkg")),
+  driver = "gpkg",
+  delete_dsn = TRUE # Equivalente a append = FALSE para sobrescribir
+)
+```
+
+Eliminar el shp
+
+```{r}
+#| warning: false
+#| message: false
+
+# Ruta completa al archivo .shp principal
+archivo_shp <- here(paste0(path_output, "subbasins_10ha.shp"))
+
+# st_delete se encarga de borrar el .shp y TODOS sus archivos asociados (.dbf, .shx, .prj...)
+sf::st_delete(archivo_shp)
+```
+
+=====================================================================
+
+#### Para 25 hectareas
+
+```{r}
+#| warning: false
+#| message: false
+
+threshold = 25 * 10000/area_celda
+threshold
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+wbt_extract_streams(
+  flow_accum = flow_acc,
+  output = here(paste0(path_output,"streams_25ha.tif")),
+  threshold = threshold
+)
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+wbt(
+  tool_name = "Subbasins",
+  d8_pntr = flow_dir,
+  streams = here(paste0(path_output,"streams_25ha.tif")),
+  output = here(paste0(path_output,"subbasins_25ha.tif"))
+)
+```
+
+
+```{r}
+wbt_raster_to_vector_polygons(
+  input = here(paste0(path_output,"subbasins_25ha.tif")),
+  output = here(paste0(path_output,"subbasins_25ha.shp"))
+)
+```
+
+=====================================================================
+
+
+```{r}
+# 2. Leer el Shapefile recién creado en R
+subbasins_25ha <- read_sf(here(paste0(path_output, "subbasins_25ha.shp"))) |> 
+  select(c("VALUE" ,   "geometry"))
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+sf::st_write(
+  obj = subbasins_25ha,
+  dsn = here(paste0(path_output, "subbasins_25ha.gpkg")),
+  driver = "gpkg",
+  delete_dsn = TRUE # Equivalente a append = FALSE para sobrescribir
+)
+```
+
+Eliminar el shp
+
+```{r}
+#| warning: false
+#| message: false
+
+# Ruta completa al archivo .shp principal
+archivo_shp <- here(paste0(path_output, "subbasins_25ha.shp"))
+
+# st_delete se encarga de borrar el .shp y TODOS sus archivos asociados (.dbf, .shx, .prj...)
+sf::st_delete(archivo_shp)
+```
+
+=====================================================================
+
+#### Para 100 hectareas
+
+```{r}
+threshold = 100 * 10000/area_celda
+threshold
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+wbt_extract_streams(
+  flow_accum = flow_acc,
+  output = here(paste0(path_output,"streams_100ha.tif")),
+  threshold = threshold
+)
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+wbt(
+  tool_name = "Subbasins",
+  d8_pntr = flow_dir,
+  streams = here(paste0(path_output,"streams_100ha.tif")),
+  output = here(paste0(path_output,"subbasins_100ha.tif"))
+)
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+wbt_raster_to_vector_polygons(
+  input = here(paste0(path_output,"subbasins_100ha.tif")),
+  output = here(paste0(path_output,"subbasins_100ha.shp"))
+)
+```
+
+=====================================================================
+
+
+```{r}
+# 2. Leer el Shapefile recién creado en R
+subbasins_100ha_sf <- read_sf(here(paste0(path_output, "subbasins_100ha.shp"))) |> 
+  select(c("VALUE" ,   "geometry"))
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+sf::st_write(
+  obj = subbasins_100ha_sf,
+  dsn = here(paste0(path_output, "subbasins_100ha.gpkg")),
+  driver = "gpkg",
+  delete_dsn = TRUE # Equivalente a append = FALSE para sobrescribir
+)
+```
+
+Eliminar el shp
+
+```{r}
+#| warning: false
+#| message: false
+
+# Ruta completa al archivo .shp principal
+archivo_shp <- here(paste0(path_output, "subbasins_100ha.shp"))
+
+# st_delete se encarga de borrar el .shp y TODOS sus archivos asociados (.dbf, .shx, .prj...)
+sf::st_delete(archivo_shp)
+```
+
+=====================================================================
+
+
+#### Para 500 hectareas
+
+```{r}
+threshold = 500 * 10000/area_celda
+threshold
+```
+
+```{r}
+#| warning: false
+#| message: false
+
+wbt_extract_streams(
+  flow_accum = flow_acc,
+  output = here(paste0(path_output,"streams_500ha.tif")),
+  threshold = threshold
+)
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+wbt(
+  tool_name = "Subbasins",
+  d8_pntr = flow_dir,
+  streams = here(paste0(path_output,"streams_500ha.tif")),
+  output = here(paste0(path_output,"subbasins_500ha.tif"))
+)
+```
+
+
+```{r}
+wbt_raster_to_vector_polygons(
+  input = here(paste0(path_output,"subbasins_500ha.tif")),
+  output = here(paste0(path_output,"subbasins_500ha.shp"))
+)
+```
+
+=====================================================================
+
+
+```{r}
+# 2. Leer el Shapefile recién creado en R
+subbasins_500ha_sf <- read_sf(here(paste0(path_output, "subbasins_500ha.shp"))) |> 
+  select(c("VALUE" ,   "geometry"))
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+sf::st_write(
+  obj = subbasins_500ha_sf,
+  dsn = here(paste0(path_output, "subbasins_500ha.gpkg")),
+  driver = "gpkg",
+  delete_dsn = TRUE # Equivalente a append = FALSE para sobrescribir
+)
+```
+
+Eliminar el shp
+
+```{r}
+#| warning: false
+#| message: false
+
+# Ruta completa al archivo .shp principal
+archivo_shp <- here(paste0(path_output, "subbasins_500ha.shp"))
+
+# st_delete se encarga de borrar el .shp y TODOS sus archivos asociados (.dbf, .shx, .prj...)
+sf::st_delete(archivo_shp)
+```
+
+=====================================================================
+
+
+
+
+
+
+#### Área total
+
+```{r}
+#| warning: false
+#| message: false
+
+wbt(
+  tool_name = "Subbasins",
+  d8_pntr = flow_dir,
+  streams = streams_ras,
+  output = here(paste0(path_output,"subbasins.tif"))
+)
+```
+
+```{r}
+wbt_raster_to_vector_polygons(
+  input = here(paste0(path_output,"subbasins.tif")),
+  output = here(paste0(path_output,"subbasins.shp"))
+)
+```
+
+
+=====================================================================
+
+
+```{r}
+# 2. Leer el Shapefile recién creado en R
+subbasins_sf <- read_sf(here(paste0(path_output, "subbasins.shp"))) |> 
+  select(c("VALUE" ,   "geometry"))
+```
+
+
+```{r}
+#| warning: false
+#| message: false
+
+sf::st_write(
+  obj = subbasins_sf,
+  dsn = here(paste0(path_output, "subbasins.gpkg")),
+  driver = "gpkg",
+  delete_dsn = TRUE # Equivalente a append = FALSE para sobrescribir
+)
+```
+
+Eliminar el shp
+
+```{r}
+#| warning: false
+#| message: false
+
+# Ruta completa al archivo .shp principal
+archivo_shp <- here(paste0(path_output, "subbasins.shp"))
+
+# st_delete se encarga de borrar el .shp y TODOS sus archivos asociados (.dbf, .shx, .prj...)
+sf::st_delete(archivo_shp)
+```
+
+=====================================================================
+
+
+  
+  
+  
+
+
+
+
+
+
+
