@@ -1,7 +1,6 @@
 ---
 title: "HIDROGRAFÍA"
 params:
-  params:
   aoi: "Erandio"
   year: 2026
   variable: "no2"

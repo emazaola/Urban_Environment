@@ -44,7 +44,7 @@ path_geodata <- here("../../10_data/geodata/2026_Erandio/DEM//")
 
 
 
-```{r 104_path_process}
+```{r 104_DEM_path}
 path_DEM <- paste0("../../20_process/geoprocess/",
                        params$year,
                        "_", params$aoi,
@@ -97,7 +97,7 @@ Tenemos la AOI generada anteriormente
 
   Modelos Digitales de Elevaciones
 
-  Modelo Digital del Terreno - MDT02 : 12  ficheros
+  Modelo Digital del Terreno - MDT02 : 12 ficheros
 
   R esolución 2 m
 
@@ -258,7 +258,7 @@ path_parquet <- here(paste0(path_DEM, "geoparquet//"))
 ```
 
 
-```{r 204_dir_parquet_create}
+```{r 104_dir_parquet_create}
 #Crear carpeta si no existe
 
 dir.create(
@@ -269,7 +269,7 @@ dir.create(
 ```
 
 
-```{r 204_remove_parqueto}
+```{r 104_remove_parqueto}
 #| warning: false
 #| message: false
 

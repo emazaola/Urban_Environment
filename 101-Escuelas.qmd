@@ -436,7 +436,7 @@ ruta_gpkg_viviendas <- file.path(path_process, "viviendas.gpkg")
 
 
 
-```{r 101_geometrias}
+```{r 101_geometrias-viviendas}
 # --- PREPARACIÓN DE GEOMETRÍAS ---
 # Versión UTM original (métrica)
 viviendas_utm <- viviendas |> 
@@ -453,7 +453,7 @@ viviendas_geo <- viviendas |>
 
 ```{r 101_saveviviendas_utm}
 sf::st_write(
-  escuelas_utm,
+  viviendas_utm,
   dsn = ruta_gpkg_viviendas,
   layer = "viviendas_utm",      # Nombre de la primera capa
   delete_layer = TRUE,        # Si ya existe esta capa, la sobrescribe
@@ -483,7 +483,7 @@ sf::st_write(
 #### Guardar parquet
 
 
-```{r 101_remove_parqueto}
+```{r 101_remove_parqueto-viviendas}
 #| warning: false
 #| message: false
 
@@ -498,7 +498,7 @@ archivos_antiguos <- list.files(
 ```
 
 
-```{r 101_guardar_buffers_parquet}
+```{r 101_guardar_buffers_parquet-viviendas}
 #| warning: false
 #| message: false
 # 
@@ -511,13 +511,53 @@ suppressWarnings({
   
   
   
-  sfarrow::st_write_parquet(escuelas_utm,
+  sfarrow::st_write_parquet(viviendas_utm,
                             file.path(path_parquet, "viviendas_utm.parquet"))
 })
 
 ```
 
 
+  ## EDIFICIOS 
+
+1. Descargar ABSOLUTAMENTE TODOS los edificios dentro de la caja `params$aoi`
+
+```{r}
+qb <- opq(st_bbox(box)) |> 
+  add_osm_feature(key = "building") # Al no poner 'value', descarga todo (incluido building=yes y lo que faltaba)
+```
+
+
+```{r}
+# 1. Descargar ABSOLUTAMENTE TODOS los edificios dentro de la caja de Erandio
+
+
+# Convertir a objeto sf y extraer polígonos
+edificios_raw <- osmdata_sf(qb)$osm_polygons
+
+# 2. Homogeneizar y clasificar los edificios en categorías térmicas/urbanas
+edificios_clasificados <- edificios_raw |> 
+  # Nos quedamos solo con las columnas que nos interesan para limpiar el dataset
+  select(osm_id, building, geometry) |> 
+  mutate(
+    clase_uso = case_when(
+      # Grupo Residencial
+      building %in% c("residential", "apartments", "house", "terrace", "detached") ~ "Residencial",
+      
+      # Grupo Industrial (Alta retención de calor)
+      building %in% c("industrial", "manufacturing", "warehouse", "works") ~ "Industrial",
+      
+      # Grupo Comercial y Servicios
+      building %in% c("commercial", "retail", "office", "supermarket", "hotel", "kiosk") ~ "Comercial_Oficinas",
+      
+      # Grupo Dotacional / Público (Escuelas, salud, etc.)
+      building %in% c("school", "university", "college", "public", "civic", "government", "hospital", "clinic", "religious", "stadium") ~ "Dotacional_Publico",
+      
+      # Grupo sin clasificar (El 'yes' original y otros menores como cobertizos o parkings)
+      TRUE ~ "No_Clasificado"
+    )
+  )
+```
 
 
 
