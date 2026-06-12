@@ -22,6 +22,7 @@ library(readxl)
 library(tidyverse)
 library(sf)
 library(sfarrow) ## para guardar como geoparquet
+library(arrow)
 
 
 library(terra)
@@ -411,32 +412,297 @@ terra::writeRaster(
 
 
 
+## GENERACIÓN DE ZONAS NO COMPACTAS (DIFERENCIA ESPACIAL)
+
+Técnica clásica del urbanismo (método de Morán-Morfología). 
+Consiste en hacer crecer un "anillo" alrededor de cada edificio; si los edificios están cerca, sus anillos se tocarán y se fusionarán.
+
+1. Haces un búfer (por ejemplo, de 20 metros) a todos los edificios.
+2. Aplicas st_union() para "disolver" las fronteras de los búfers que se tocan.
+3. Filtras los polígonos resultantes: los que tengan un área grande serán tus "Zonas de alta densidad (Sí)" y los pequeñitos que queden aislados serán las edificaciones dispersas (No).
+
+Es puramente geométrica, intuitiva y reproducible.
+Controlas la definición de "proximidad" directamente en metros.
+
+Hay que cargar las capas de edificios
+
+```{r}
+path_parquet <- paste0(path_process,"geoparquet")
+ruta_completa <- file.path(path_parquet, "edificios_utm.parquet")
+```
+
+
+
+```{r 110_path_parquet}
+path_parquet <- here(paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/",
+                       "geoparquet",
+                       "//"))
+
+ruta_completa <- file.path(path_parquet, "edificios_utm.parquet")
+```
+
+```{r}
+edificios_utm <- st_read_parquet(ruta_completa)
+```
+
+
+### Zonas fusionadas
+
+```{r 110_ZONAS_FUSIONADAS}
+zonas_fusionadas <- st_buffer(edificios_utm, dist = 20) |> 
+  st_union() |> 
+  st_cast("POLYGON") |> 
+  st_as_sf()
+```
+
+```{r}
+mapView(zonas_fusionadas)
+```
+
+
+### Zonas compactas
+
+Calculas el área y filtras los clústeres grandes
+
+```{r}
+# Calculas el área y filtras los clústeres grandes
+zonas_compactas <- zonas_fusionadas |> 
+  mutate(area = as.numeric(st_area(x))) |> 
+  filter(area > 20000) # Ejemplo: zonas de más de 1 hectárea continua
+```
+
+
+```{r}
+mapview(zonas_compactas)
+```
+
+
+### Zonas no compactas
+
+
+```{r}
+# 2. Realizar la diferencia geométrica: Municipio TOTAL menos Zonas Compactas
+zonas_no_compactas <- st_difference(edificios_utm, st_union(zonas_compactas)) |> 
+  st_cast("POLYGON") |> 
+  st_as_sf()
+```
+
+
+```{r}
+# 3. Limpieza de geometrías vacías (por si acaso quedaran artefactos de las fronteras)
+zonas_no_compactas <- zonas_no_compactas[!st_is_empty(zonas_no_compactas), ]
+```
 
 
 
 
+```{r}
+# 4. Control visual rápido para comprobar que ambas capas encajan como un puzle
+plot(st_geometry(edificios_utm), border = "black", main = "Control de Partición Urbana")
+plot(st_geometry(zonas_compactas), col = "red", border = NA, add = TRUE)
+plot(st_geometry(zonas_no_compactas), col = "green", border = NA, add = TRUE)
+```
 
 
 
 
+### Extraer y recortar los valores del ráster uhi_1
+
+Proyectar el ráster uhi_1 a UTM 30N (EPSG:25830) para emparejarlo con los vectores
+
+Usamos el método "bilinear" por tratarse de un índice continuo (Z-score)
+
+```{r}
+# 1. Proyectar el ráster uhi_1 a UTM 30N (EPSG:25830) para emparejarlo con los vectores
+# Usamos el método "bilinear" por tratarse de un índice continuo (Z-score)
+uhi_utm <- project(uhi_1, "EPSG:25830", method = "bilinear")
+```
+
+Extraer los píxeles de la zona COMPACTA
+ 'extract' devuelve un dataframe con el ID del polígono y los valores del ráster
+
+```{r}
+# 2. Extraer los píxeles de la zona COMPACTA
+# 'extract' devuelve un dataframe con el ID del polígono y los valores del ráster
+pixeles_compactos <- terra::extract(uhi_utm,
+                                    vect(zonas_compactas),
+                                    na.rm = TRUE) |> 
+  as_tibble() |> 
+  rename(uhi_val = 2) |>          # Renombramos la columna del valor para que sea claro
+  mutate(zona = "Compacta")       # Etiquetamos el grupo
+```
+
+Extraer los píxeles de la zona NO COMPACTA
+
+```{r}
+# 3. Extraer los píxeles de la zona NO COMPACTA
+pixeles_no_compactos <- terra::extract(uhi_utm,
+                                       vect(zonas_no_compactas),
+                                       na.rm = TRUE) |> 
+  as_tibble() |> 
+  rename(uhi_val = 2) |> 
+  mutate(zona = "No Compacta")    # Etiquetamos el grupo
+```
+
+Unir ambos resultados en un único dataset limpio para los siguientes pasos
+
+```{r}
+# 4. Unir ambos resultados en un único dataset limpio para los siguientes pasos
+dataset_uhi <- bind_rows(pixeles_compactos, pixeles_no_compactos) |> 
+  select(zona, uhi_val) # Nos quedamos solo con las dos columnas clave
+```
 
 
+### Análisis Estadístico Descriptivo
+
+Utilizando el dataset_uhi creado en el paso anterior, vamos a agrupar los datos por tipo de zona ("Compacta" vs. "No Compacta") y calcule las estadísticas clave.
 
 
+```{r}
+# ============================================================================
+# PASO 3: ANÁLISIS ESTADÍSTICO COMPARATIVO
+# ============================================================================
+
+tabla_estadisticas <- dataset_uhi |> 
+  group_by(zona) |> 
+  summarise(
+    Numero_Pixeles = n(),
+    Media_UHI      = mean(uhi_val, na.rm = TRUE),
+    Mediana_UHI    = median(uhi_val, na.rm = TRUE),
+    Desv_Estandar  = sd(uhi_val, na.rm = TRUE),
+    Minimo         = min(uhi_val, na.rm = TRUE),
+    Maximo         = max(uhi_val, na.rm = TRUE),
+    Cercano_Min    = quantile(uhi_val, 0.25, na.rm = TRUE), # Cuartil 1 (25%)
+    Cercano_Max    = quantile(uhi_val, 0.75, na.rm = TRUE)  # Cuartil 3 (75%)
+  ) |> 
+  ungroup()
+
+# Mostrar la tabla formateada en la consola
+print(tabla_estadisticas)
+```
+
+Tres claves:
+
+La Media y Mediana (Media_UHI / Mediana_UHI): Como uhi_1 es un Z-score basado en la media de todo el municipio (cuyo promedio global es 0), lo esperable es que en la zona Compacta la media sea positiva (por encima de 0, indicando anomalía de calor) y en la No Compacta sea negativa (por debajo de 0, actuando como sumidero térmico). La diferencia entre ambas medias te da la Intensidad de la Isla de Calor Relativa de Erandio.
+
+El Máximo (Maximo): Te dirá cuántas desviaciones estándar por encima del promedio está el píxel más caliente del municipio. Lo habitual es que este valor extremo aparezca en la zona Compacta (zonas industriales de Axpe, asfalto consolidado, etc.).
+
+La Desviación Estándar (Desv_Estandar): Te mostrará la variabilidad. Si la zona Compacta tiene una desviación alta, significa que dentro del propio casco urbano hay "oasis" fríos (como parques) mezclados con calles muy calientes.
 
 
+::: {.alert .alert-block .alert-info}
+La confirmación de la Isla de Calor: 
+La zona Compacta tiene una Media_UHI de 1.03. Esto significa que, de media, los núcleos urbanos consolidados de Erandio están una desviación estándar entera por encima del promedio del municipio. Es una anomalía térmica positiva muy clara.
+
+El matiz del territorio (El "efecto Vizcaya"): 
+
+Fíjate en la zona No Compacta. Su media es 0.289 (positiva también). ¿Por qué no es negativa si es la zona rural? Recuerda que estamos analizando una imagen del 22 de julio a las 17:54h. A esa hora de la tarde en pleno verano, el suelo desnudo, los pastos secos de los montes y las laderas forestales orientadas al sol acumulan muchísimo calor y siguen emitiendo radiación.
+
+Contraste térmico: 
+
+Aun así, la diferencia entre la mediana urbana (1.12) y la rural (0.335) es de casi 0.8 desviaciones estándar. El Erandio compacto está significativamente más castigado por el calor.
+
+:::
+
+### GRÁFICO DE DENSIDAD DE LA ISLA DE CALOR INTRAMUNICIPAL
+
+```{r}
+# ============================================================================
+# PASO 4: GRÁFICO DE DENSIDAD DE LA ISLA DE CALOR INTRAMUNICIPAL
+# ============================================================================
+
+ggplot(dataset_uhi, aes(x = uhi_val, fill = zona)) +
+  # Creamos las curvas de densidad con transparencia (alpha) para que se solapen limpiamente
+  geom_density(alpha = 0.5, color = "white", linewidth = 0.3) +
+  
+  # Línea vertical en el 0 (que representa la media exacta de todo Erandio)
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40", linewidth = 0.7) +
+  
+  # Colores estratégicos: Rojo cálido para lo urbano, Verde/Azul para lo no urbano
+  scale_fill_manual(
+    values = c("Compacta" = "#d95f02", "No Compacta" = "#1b9e77"),
+    name = "Tipología de Zona"
+  ) +
+  
+  # Configuración de ejes y etiquetas parametrizadas
+  labs(
+    title = paste0("Distribución de la Intensidad UHI (Z-score) en ", params$aoi),
+    subtitle = paste0("Comparativa: Núcleos Compactos vs. Espacio Disperso/Rural — ", lstday1$label),
+    x = "Intensidad de la Isla de Calor (Desviaciones Estándar respecto al promedio)",
+    y = "Densidad de Píxeles",
+    caption = "La línea discontinua (0) representa el promedio térmico municipal.\nDatos: ECOSTRESS L2T"
+  ) +
+  
+  # Un tema limpio y profesional para publicaciones
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    plot.subtitle = element_text(color = "gray30", size = 10),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom",
+    legend.background = element_rect(fill = "white", color = "gray90")
+  )
+```
 
 
+```{r}
+# ============================================================================
+# PASO 5: MAPA CARTOGRÁFICO DE LA INTENSIDAD UHI POR TIPOLOGÍA DE ZONA
+# ============================================================================
+library(ggnewscale)
 
 
-
-
-
-
-
-
-
-
+ggplot() +
+  # 1. Capa de fondo: El ráster de intensidad UHI (Z-score) en formato UTM
+  geom_spatraster(data = uhi_utm) +
+  
+  # Aplicamos la paleta 'magma' que viste que funcionaba tan bien
+  scale_fill_viridis_c(
+    option = "magma",
+    na.value = "transparent",
+    name = "Intensidad UHI\n(Z-score)",
+    guide = guide_colorbar(order = 1) # Asegura el orden de las leyendas
+  ) +
+  
+  # Nueva escala para las líneas vectoriales usando la librería 'ggnewscale'
+  # Si no tienes 'ggnewscale', puedes comentar estas líneas de contorno
+  ggnewscale::new_scale_color() +
+  
+  # 2. Capa vectorial: Contornos de las Zonas Compactas (Urbano consolidado)
+  geom_sf(data = zonas_compactas, aes(color = "Zona Compacta"), fill = NA, linewidth = 0.6) +
+  
+  # 3. Capa vectorial: Contornos de las Zonas No Compactas (Rural/Disperso)
+  geom_sf(data = zonas_no_compactas, aes(color = "Zona No Compacta"), fill = NA, linewidth = 0.4, linetype = "dashed") +
+  
+  # Configuración de los colores de los contornos vectoriales
+  scale_color_manual(
+    values = c("Zona Compacta" = "#39ff14", "Zona No Compacta" = "cyan"), # Colores neón para que contrasten sobre el fondo oscuro de magma
+    name = "Límites de Análisis"
+  ) +
+  
+  # 4. Elementos cartográficos y textos parametrizados
+  labs(
+    title = paste0("Radiografía Térmica Intramunicipal en ", params$aoi),
+    subtitle = paste0("Análisis dicotómico de la Isla de Calor — ", lstday1$label),
+    x = "Longitud (UTM)",
+    y = "Latitud (UTM)",
+    caption = "Líneas continuas verdes delimitan los clústeres urbanos consolidados (búfer 20m + disolución > 2000 m²).\nDatos: ECOSTRESS L2T"
+  ) +
+  
+  # 5. Diseño estético del mapa
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    plot.subtitle = element_text(color = "gray30", size = 10),
+    panel.grid.major = element_line(color = "gray90", linewidth = 0.2), # Cuadrícula UTM muy sutil
+    legend.position = "right",
+    legend.box = "vertical"
+  )
+```
 
 
 

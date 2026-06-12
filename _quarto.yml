@@ -15,6 +15,7 @@ book:
         
     - part: "EL ÁREA DE ESTUDIO"
       chapters:
+         - 100-Edificios.qmd
          - 101-Escuelas.qmd
          - 102-POPulation.qmd
          - 103-red_vial.qmd
@@ -22,7 +23,7 @@ book:
          - 105-contours.qmd
          - 106-hidro.qmd
          - 107-subcuencas.qmd
-         - 110-LST-Ecostress.qmd
+         - 150-LST-Ecostress.qmd
 #        - 100-_Divisiones Euskadi.qmd
 
     - part: "CONTAMINACIÓN NO2"

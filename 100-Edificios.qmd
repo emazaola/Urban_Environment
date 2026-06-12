@@ -1,0 +1,316 @@
+---
+title: "Centros educativos. Open Street Maps"
+params:
+  aoi: "Erandio"
+  year: 2026
+  variable: "no2"
+---
+
+## Librerias
+
+```{r echo=FALSE, warning=FALSE}
+
+# library(jsonlite)
+# library(readxl)
+library(tidyverse)
+library(sf)
+library(osmdata)
+library(httr2)
+
+
+# library(openrouteservice)
+
+library(mapview)
+library(here)
+
+
+#library(leaflet)
+#library(leaflet.extras)
+
+```
+
+
+## Fijar rutas
+
+```{r 100_data_path}
+geodata_path <- here("../../10_data/geodata/geoeuskadi//")
+# data_path <- here("../../10_data/numeric-data//")
+
+```
+
+
+
+
+
+```{r 100_path_process}
+path_process <- paste0("../../20_process/geoprocess/",
+                       params$year,
+                       "_", params$aoi,
+                       "_", params$variable,
+                       "/")
+path_process
+```
+
+
+Crear directorio
+
+```{r 100__dir_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_process,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+## Cargar datos
+
+La zona de interés
+
+```{r 100_aoi}
+
+
+aoi <- read_sf(here(paste0(geodata_path, "MUNICIPIOS_5000_ETRS89/MUNICIPIOS_5000_ETRS89.shp"))) |> 
+
+  filter(NOMBRE_TOP== params$aoi)|> 
+  select(c("NOMBRE_TOP", "MUN_MUNI", "geometry"))|> 
+  select(c("NOMBRE_TOP", "geometry"))
+
+
+# st_crs(aoi)
+
+aoi$NOMBRE_TOP <- params$aoi
+
+# mapview(aoi)
+```
+
+Creamos un buffer en metros y luego lo pasamos a coordenadas geométricas
+
+
+```{r}
+aoi_B <- aoi |> 
+  st_buffer(dist = 100) |> 
+  st_transform(4326)  
+  
+```
+
+
+```{r}
+# Crear bbox con un pequeño buffer
+box <- st_bbox(aoi_B)  # Ajusta la distancia según tu CRS
+```
+
+```{r}
+mapview(box)
+```
+
+
+
+###-----------------
+
+## EDIFICIOS 
+Construir consulta OSM para centros educativos
+
+Al no poner 'value', descarga todo (incluido building=yes y lo demás)
+
+```{r 100-osm_query}
+# 1. Construir consulta OSM para centros educativos
+
+query <- opq(st_bbox(box))  |>   # Usar bbox del área de interés
+  add_osm_feature(key = "building")  |> 
+  osmdata_sf()
+
+
+# Al no poner 'value', descarga todo (incluido building=yes y lo que faltaba)
+
+```
+
+Se extraen los polígonos
+
+```{r}
+buildings_polygons <- query$osm_polygons
+```
+
+
+```{r}
+mapview(buildings_polygons, zcol="amenity")
+```
+
+
+
+
+```{r}
+# 2. Homogeneizar y clasificar los edificios en categorías térmicas/urbanas
+edificios <- buildings_polygons |> 
+  # Nos quedamos solo con las columnas que nos interesan para limpiar el dataset
+  select(osm_id, building, geometry) |> 
+  mutate(
+    clase_uso = case_when(
+      # Grupo Residencial
+      building %in% c("residential", "apartments", "house", "terrace", "detached") ~ "Residencial",
+      
+      # Grupo Industrial (Alta retención de calor)
+      building %in% c("industrial", "manufacturing", "warehouse", "works") ~ "Industrial",
+      
+      # Grupo Comercial y Servicios
+      building %in% c("commercial", "retail", "office", "supermarket", "hotel", "kiosk") ~ "Comercial_Oficinas",
+      
+      # Grupo Dotacional / Público (Escuelas, salud, etc.)
+      building %in% c("school", "university", "college", "public", "civic", "government", "hospital", "clinic", "religious", "stadium") ~ "Dotacional_Publico",
+      
+      # Grupo sin clasificar (El 'yes' original y otros menores como cobertizos o parkings)
+      TRUE ~ "No_Clasificado"
+    )
+  )
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# 3. Filtrar elementos dentro del aoi (mismo CRS)
+edificios <- edificios  |>  
+  st_transform(st_crs(aoi))  |>   # Asegurar mismo sistema de coordenadas
+  st_intersection(aoi)  # Recortar al área de interés
+
+```
+
+
+```{r}
+# mapview w list of objects
+mapview(list(aoi, edificios),
+        zcol = list(NULL, "building"),
+        legend = list(TRUE, TRUE),
+        homebutton = list(FALSE, TRUE))
+```
+
+
+
+### Guardar edificios
+
+#### Guardar GPKG
+
+Guardar UTM
+  
+```{r 100_rutasgpkg}
+# 1. Definimos las rutas absolutas para tus dos GeoPackages
+
+
+ruta_gpkg_edificios <- file.path(path_process, "edificios.gpkg")
+
+```
+
+
+
+```{r 100_geometrias}
+# --- PREPARACIÓN DE GEOMETRÍAS ---
+# Versión UTM original (métrica)
+edificios_utm <- edificios |> 
+  sf::st_transform(crs = 25830)
+
+#####--------------------------------------------
+
+# Versión Geográfica (grados) para Leaflet
+edificios_geo <- edificios |> 
+  sf::st_transform(crs = 4326)
+```
+
+
+```{r 100_saveGpkg_utm}
+sf::st_write(
+  edificios_utm,
+  dsn = ruta_gpkg_edificios,
+  layer = "edificios_utm",      # Nombre de la primera capa
+  delete_layer = TRUE,        # Si ya existe esta capa, la sobrescribe
+  quiet = TRUE
+)
+#####------------------------------------
+```
+
+
+Guardar Geográficas
+
+```{r 100_saveGpkg_geo}
+# Guardamos la capa GEO en el mismo archivo físico
+
+sf::st_write(
+  edificios_geo,
+  dsn = ruta_gpkg_edificios,
+  layer = "edificios_geo",      # Nombre de la segunda capa
+  delete_layer = TRUE,        # Sobrescribe solo esta capa si ya existía
+  quiet = TRUE
+)
+```
+
+
+
+#### Guardar parquet
+
+Creamos el folder geoparquet
+
+```{r}
+path_parquet <- here(paste0(path_process, "geoparquet//"))
+```
+
+
+```{r 100_dir_parquet_create}
+#Crear carpeta si no existe
+
+dir.create(
+  path_parquet,
+  recursive = TRUE, 
+  showWarnings = FALSE)
+
+```
+
+
+```{r 100_remove_parqueto}
+#| warning: false
+#| message: false
+
+
+# --- 0. LIMPIEZA AUTOMÁTICA DE PARQUETS ANTIGUOS ---
+# Buscamos todos los archivos en "path_process" que contengan la palabra "isocrona" y terminen en .parquet
+archivos_antiguos <- list.files(
+  path = path_parquet, 
+  pattern = "edificios.*\\.parquet$",
+  full.names = TRUE
+)
+
+
+```
+
+
+```{r 100_guardar_buffers_parquet}
+#| warning: false
+#| message: false
+# 
+
+# 
+suppressWarnings({
+  sfarrow::st_write_parquet(edificios_geo,
+                            file.path(path_parquet, "edificios_geo.parquet"))
+  
+  
+  
+  
+  sfarrow::st_write_parquet(edificios_utm,
+                            file.path(path_parquet, "edificios_utm.parquet"))
+})
+
+
+```
+
+
+
+=====================================================
