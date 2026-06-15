@@ -291,7 +291,7 @@ archivos_antiguos <- list.files(
 ```
 
 
-```{r 100_guardar_buffers_parquet}
+```{r 100_guardar_edificos_parquet}
 #| warning: false
 #| message: false
 # 

@@ -42,6 +42,7 @@ library(htmltools)
 #library(tidyterra)
 
 
+
 ```
 
 ## Fijar rutas
@@ -486,7 +487,11 @@ Usamos el método "bilinear" por tratarse de un índice continuo (Z-score)
 ```{r}
 # 1. Proyectar el ráster uhi_1 a UTM 30N (EPSG:25830) para emparejarlo con los vectores
 # Usamos el método "bilinear" por tratarse de un índice continuo (Z-score)
-uhi_utm <- project(uhi_1, "EPSG:25830", method = "bilinear")
+
+
+uhi_utm <- terra::project(uhi_1,
+                          "+proj=utm +zone=30 +datum=WGS84 +units=m +no_defs", 
+                          method = "bilinear")
 ```
 
 Extraer los píxeles de la zona COMPACTA 'extract' devuelve un dataframe con el ID del polígono y los valores del ráster
@@ -560,7 +565,7 @@ La Desviación Estándar (Desv_Estandar): Te mostrará la variabilidad. Si la zo
 ::: {.alert .alert-block .alert-info}
 La confirmación de la Isla de Calor: La zona Compacta tiene una Media_UHI de 1.03. Esto significa que, de media, los núcleos urbanos consolidados de Erandio están una desviación estándar entera por encima del promedio del municipio. Es una anomalía térmica positiva muy clara.
 
-El matiz del territorio (El "efecto Vizcaya"):
+El matiz del territorio (El "Efecto Bizkaia"):
 
 Fíjate en la zona No Compacta. Su media es 0.289 (positiva también). ¿Por qué no es negativa si es la zona rural? Recuerda que estamos analizando una imagen del 22 de julio a las 17:54h. A esa hora de la tarde en pleno verano, el suelo desnudo, los pastos secos de los montes y las laderas forestales orientadas al sol acumulan muchísimo calor y siguen emitiendo radiación.
 
@@ -813,7 +818,75 @@ Usar desviaciones estándar te permite afirmar con total seguridad científica q
 :::
 
 
+##------------------------------
+### GUARDAR COMPACTACIÓN
 
+
+```{r 150_remove_parqueto}
+#| warning: false
+#| message: false
+
+
+# --- 0. LIMPIEZA AUTOMÁTICA DE PARQUETS ANTIGUOS ---
+# Buscamos todos los archivos en "path_process" que contengan la palabra "compactado" y terminen en .parquet
+archivos_antiguos <- list.files(
+  path = path_process, 
+  pattern = "compactas.*\\.parquet$",
+  full.names = TRUE
+)
+
+
+```
+
+
+
+
+```{r 150_guardar_COMPACTAS_parquet}
+#| warning: false
+#| message: false
+# 
+zonas_compactas_geo <- zonas_compactas |> 
+  sf::st_transform(crs = 4326)
+# 
+suppressWarnings({
+  sfarrow::st_write_parquet(zonas_compactas_geo,
+                            file.path(path_process, "zonas_compactas_geo.parquet"))
+  
+  
+  
+  
+  sfarrow::st_write_parquet(zonas_compactas,
+                            file.path(path_process, "zonas_compactas_utm.parquet"))
+})
+
+
+```
+
+
+
+
+```{r 150_guardar_NO-COMPACTAS_parquet}
+#| warning: false
+#| message: false
+# 
+zonas_no_compactas_geo <- zonas_no_compactas |> 
+  sf::st_transform(crs = 4326)
+# 
+suppressWarnings({
+  sfarrow::st_write_parquet(zonas_no_compactas_geo,
+                            file.path(path_process, "zonas_no_compactas_geo.parquet"))
+  
+  
+  
+  
+  sfarrow::st_write_parquet(zonas_compactas,
+                            file.path(path_process, "zonas_no_compactas_utm.parquet"))
+})
+
+
+```
+
+##------------------------------
 
 ## IMAPCTO EN CENTROS ESCOLARES
 
@@ -1095,6 +1168,53 @@ mapview(escuelas_sf_mapa,
 
 
 
+
+##------------------------------
+### GUARDAR CLASIFICACIÓN TÉRMICA ESCUELAS
+
+```{r 150_remove_escuelas-parqueto}
+#| warning: false
+#| message: false
+
+
+# --- 0. LIMPIEZA AUTOMÁTICA DE PARQUETS ANTIGUOS ---
+# Buscamos todos los archivos en "path_process" que contengan la palabra "compactado" y terminen en .parquet
+archivos_antiguos <- list.files(
+  path = path_process, 
+  pattern = "uhi_escuelas.*\\.parquet$",
+  full.names = TRUE
+)
+
+
+```
+
+
+
+```{r 150_guardar_escuelas_parquet}
+#| warning: false
+#| message: false
+# 
+uhi_escuelas_geo <- escuelas_sf_mapa |> 
+  sf::st_transform(crs = 4326)
+# 
+suppressWarnings({
+  sfarrow::st_write_parquet(uhi_escuelas_geo,
+                            file.path(path_process, "uhi_escuelas_geo.parquet"))
+  
+  
+  
+  
+  sfarrow::st_write_parquet(escuelas_sf_mapa,
+                            file.path(path_process, "uhi_escuelas_utm.parquet"))
+})
+
+
+```
+
+
+
+
+##------------------------------
 
 
 
